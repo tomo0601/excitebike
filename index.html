@@ -496,11 +496,7 @@
                 btn.addEventListener('touchcancel', (e) => { e.preventDefault(); sendInput('keyup', code); });
             }
 
-            if (!isController) {
             bindTouch('btn-accel', 'KeyX'); bindTouch('btn-turbo', 'KeyZ');
-            
-            
-        }
             bindTouch('btn-up', 'ArrowUp'); bindTouch('btn-down', 'ArrowDown');
             bindTouch('btn-left', 'ArrowLeft'); bindTouch('btn-right', 'ArrowRight');
 
@@ -524,6 +520,8 @@
                     np.targetLane = p.lane;
                     np.currentLane = p.lane;
                     networkPlayers[p.id] = np;
+                    // 新規参加者に現在のコースデータを送る
+                    socket.emit('track_data', { length: track.length, obstacles: track.obstacles });
                 });
 
                 socket.on('player_left', (p) => {
@@ -2104,6 +2102,34 @@
             }
             updateParticles();
             keysJustPressed.ArrowUp = false; keysJustPressed.ArrowDown = false;
+            
+            // --- ホスト状態のブロードキャスト ---
+            if (!isController && socket && (gameState === STATE_PLAYING || gameState === STATE_COUNTDOWN || gameState === STATE_CRASHED)) {
+                const stateData = {
+                    state: gameState,
+                    cameraX: cameraX,
+                    time: timeDisplay.textContent,
+                    players: {}
+                };
+                if (!isHostOnly) {
+                    stateData.players['host'] = {
+                        x: player.x, y: player.y, angle: player.angle, currentLane: player.currentLane,
+                        vx: player.vx, vy: player.vy, speed: player.speed, isGrounded: player.isGrounded,
+                        overheated: player.overheated, crashTimer: player.crashTimer, wheelSpin: player.wheelSpin,
+                        colorConfig: player.colorConfig
+                    };
+                }
+                for (const id in networkPlayers) {
+                    const np = networkPlayers[id];
+                    stateData.players[id] = {
+                        x: np.x, y: np.y, angle: np.angle, currentLane: np.currentLane,
+                        vx: np.vx, vy: np.vy, speed: np.speed, isGrounded: np.isGrounded,
+                        overheated: np.overheated, crashTimer: np.crashTimer, wheelSpin: np.wheelSpin,
+                        colorConfig: np.colorConfig
+                    };
+                }
+                socket.emit('host_state', stateData);
+            }
         }
 
         function draw() {
@@ -2287,33 +2313,36 @@
         startBtnPlay.addEventListener('click', () => { isHostOnly = false; startGame(); });
         startBtnHost.addEventListener('click', () => { isHostOnly = true; startGame(); });
 
-        window.addEventListener('keydown', (e) => {
-            const code = e.code;
-            sfx.resume();
-            if (keys.hasOwnProperty(code)) {
-                if (!player.keys[code] && player.keysJustPressed.hasOwnProperty(code)) player.keysJustPressed[code] = true;
-                player.keys[code] = true;
-                if (!keys[code] && keysJustPressed.hasOwnProperty(code)) keysJustPressed[code] = true;
-                keys[code] = true; e.preventDefault();
-            }
-        });
-        window.addEventListener('keyup', (e) => {
-            if (keys.hasOwnProperty(e.code)) {
-                keys[e.code] = false;
-                player.keys[e.code] = false;
-            }
-        });
+        if (!isController) {
+            window.addEventListener('keydown', (e) => {
+                const code = e.code;
+                sfx.resume();
+                if (keys.hasOwnProperty(code)) {
+                    if (!player.keys[code] && player.keysJustPressed.hasOwnProperty(code)) player.keysJustPressed[code] = true;
+                    player.keys[code] = true;
+                    if (!keys[code] && keysJustPressed.hasOwnProperty(code)) keysJustPressed[code] = true;
+                    keys[code] = true; e.preventDefault();
+                }
+            });
+            window.addEventListener('keyup', (e) => {
+                if (keys.hasOwnProperty(e.code)) {
+                    keys[e.code] = false;
+                    player.keys[e.code] = false;
+                }
+            });
 
-        // モバイル操作
-        function bindTouch(id, code) {
-            const btn = document.getElementById(id);
-            btn.addEventListener('touchstart', (e) => { e.preventDefault(); keys[code] = true; if (keysJustPressed.hasOwnProperty(code)) keysJustPressed[code] = true; });
-            btn.addEventListener('touchend', (e) => { e.preventDefault(); keys[code] = false; });
-            btn.addEventListener('touchcancel', (e) => { e.preventDefault(); keys[code] = false; });
+            // ホスト・スタンドアロン時のモバイル操作（一応残す）
+            function bindTouchHost(id, code) {
+                const btn = document.getElementById(id);
+                if (!btn) return;
+                btn.addEventListener('touchstart', (e) => { e.preventDefault(); keys[code] = true; if (keysJustPressed.hasOwnProperty(code)) keysJustPressed[code] = true; });
+                btn.addEventListener('touchend', (e) => { e.preventDefault(); keys[code] = false; });
+                btn.addEventListener('touchcancel', (e) => { e.preventDefault(); keys[code] = false; });
+            }
+            bindTouchHost('btn-accel', 'KeyX'); bindTouchHost('btn-turbo', 'KeyZ');
+            bindTouchHost('btn-up', 'ArrowUp'); bindTouchHost('btn-down', 'ArrowDown');
+            bindTouchHost('btn-left', 'ArrowLeft'); bindTouchHost('btn-right', 'ArrowRight');
         }
-        bindTouch('btn-accel', 'KeyX'); bindTouch('btn-turbo', 'KeyZ');
-        bindTouch('btn-up', 'ArrowUp'); bindTouch('btn-down', 'ArrowDown');
-        bindTouch('btn-left', 'ArrowLeft'); bindTouch('btn-right', 'ArrowRight');
 
         // --- スマホ参加用QRコードの生成 ---
         (function setupJoinQR() {
