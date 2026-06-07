@@ -5,8 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>EXCITE BIKE FC｜FC風モトクロスレーサー</title>
-    <!-- CDNからSocket.IOを読み込む（サーバー分離構成用） -->
+    <!-- CDNからSocket.IOとQR生成ライブラリを読み込む -->
     <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
     <meta name="description" content="ファミコン風のモトクロスレースゲーム。スマホはQRコードを読み取って参加！ターボとTEMP管理で3周のベストタイムを目指せ。">
     <meta name="theme-color" content="#3ca0e8">
     <meta name="mobile-web-app-capable" content="yes">
@@ -334,7 +335,7 @@
             box-sizing: border-box;
             margin-top: 10px;
             background-color: #222;
-            border-top: 4px solid #fff;
+            border-top: 4px solid #fff; z-index: 100; flex-shrink: 0;
         }
 
         .control-btn-group {
@@ -423,7 +424,10 @@
                     <div class="qr-note" id="qr-note">QRを読み取って参加</div>
                 </div>
             </div>
-            <button id="start-btn">START</button>
+            <div style="display: flex; gap: 20px; margin-top: 10px; flex-wrap: wrap; justify-content: center;">
+                <button id="start-btn-play">遊ぶ＆ホスト</button>
+                <button id="start-btn-host">ホスト専用(観戦)</button>
+            </div>
         </div>
     </div>
 
@@ -450,7 +454,7 @@
         // --- デプロイ設定 ---
         // XSERVER等の別サーバーでHTMLを配信する場合、ここをRenderなどのバックエンドURLに変更します
         // 例: const BACKEND_URL = 'https://your-backend.onrender.com';
-        const BACKEND_URL = ''; // 空文字の場合は同じサーバーに接続します
+        const BACKEND_URL = 'https://excitebike-k57k.onrender.com'; // 空文字の場合は同じサーバーに接続します
 
         const socket = typeof io !== 'undefined' ? io(BACKEND_URL) : null;
         const urlParams = new URLSearchParams(window.location.search);
@@ -458,15 +462,16 @@
 
         if (isController) {
             // コントローラー用のUI設定
-            document.getElementById('game-container').style.display = 'none';
+            // スマホ画面でもコースを表示するため隠さない
+            document.getElementById('message-overlay').style.display = 'none';
             document.getElementById('mobile-controls').style.display = 'flex';
             document.getElementById('mobile-controls').style.flexDirection = 'row';
-            document.getElementById('mobile-controls').style.height = '100vh';
+            document.getElementById('mobile-controls').style.marginTop = 'auto';
             document.getElementById('mobile-controls').style.alignItems = 'center';
             document.getElementById('mobile-controls').style.margin = '0';
             
             document.body.style.backgroundColor = '#222';
-            document.body.innerHTML += '<div style="position:absolute; top:20px; left:20px; color:#fff; font-size:24px;" id="controller-msg">ホストに接続しました。画面を見て操作してください。</div>';
+            document.getElementById('mobile-controls').innerHTML += '<div style="width:100%; text-align:center; color:#ccc; font-size:12px; margin-top:10px;" id="controller-msg">ホストに接続しました</div>';
 
             if (socket) {
                 socket.emit('register', 'controller');
@@ -531,7 +536,7 @@
                     const np = networkPlayers[data.id];
                     if (np) {
                         if (data.input.type === 'keydown') {
-                            if (!np.keys[data.input.code] && np.keysJustPressed.hasOwnProperty(data.input.code)) {
+                            if (np.keys && !np.keys[data.input.code] && np.keysJustPressed.hasOwnProperty(data.input.code)) {
                                 np.keysJustPressed[data.input.code] = true;
                             }
                             np.keys[data.input.code] = true;
@@ -553,7 +558,9 @@
         const messageOverlay = document.getElementById('message-overlay');
         const gameTitle = document.getElementById('game-title');
         const gameSubtitle = document.getElementById('game-subtitle');
-        const startBtn = document.getElementById('start-btn');
+        const startBtnPlay = document.getElementById('start-btn-play');
+        const startBtnHost = document.getElementById('start-btn-host');
+        let isHostOnly = false;
         const topHud = document.getElementById('top-hud');
         topHud.classList.add('hidden'); // タイトル/結果画面では非表示
 
@@ -730,11 +737,14 @@
 
         // --- プレイヤー ---
         class Player {
-            constructor() {
-                this.reset();
+            constructor(colorConfig = null) {
                 this.width = 50;  // ドット絵に合わせて調整
                 this.height = 30;
                 this.wheelBase = 30;
+                this.keys = { ArrowRight: false, ArrowLeft: false, ArrowUp: false, ArrowDown: false, KeyX: false, KeyZ: false };
+                this.keysJustPressed = { ArrowUp: false, ArrowDown: false };
+                this.colorConfig = colorConfig;
+                this.reset();
             }
 
             reset() {
@@ -2037,7 +2047,34 @@
             new Rival({ frame: '#16a085', frameShade: '#0b5345', suit: '#7dcea0', suitShade: '#1e8449', helmet: '#abebc6', lane: 3, baseSpeed: 8.9, startX: 270 }),
         ];
 
-        if (isController) { window.update = ()=>{}; window.draw = ()=>{}; window.gameLoop = ()=>{}; } // Controller doesn't run game loop
+        if (isController) {
+            let hostState = null;
+            if (socket) {
+                socket.on('host_state', (data) => {
+                    hostState = data;
+                });
+                socket.on('track_data', (data) => {
+                    // トラックデータを同期
+                    track.obstacles = data.obstacles.map(o => ({
+                        x: o.x, width: o.width, height: o.height, type: o.type, hasDirt: o.hasDirt
+                    }));
+                    track.length = data.length;
+                    gameState = STATE_PLAYING;
+                });
+            }
+            window.update = () => {}; 
+            window.draw = () => {
+                ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+                if (!hostState) return;
+                cameraX = hostState.cameraX;
+                timeDisplay.textContent = hostState.time;
+                track.drawClient(hostState.players);
+            };
+            window.gameLoop = () => {
+                window.draw();
+                animationId = requestAnimationFrame(window.gameLoop);
+            };
+        }
         // --- メインループ ---
         function update(timestamp) {
             if (gameState === STATE_COUNTDOWN) {
@@ -2188,11 +2225,20 @@
 
         // --- ゲーム進行管理 ---
         function startGame() {
+            if (isHostOnly) {
+                // ホスト専用なら自機の表示を隠すか、特別な状態にする
+                player.x = -9999;
+                player.currentLane = -1;
+                document.getElementById('bottom-hud').style.display = 'none';
+            }
             sfx.init(); sfx.resume(); // ユーザー操作のタイミングで音声を有効化
             gameState = STATE_COUNTDOWN;
             player.reset();
             for (const id in networkPlayers) networkPlayers[id].reset();
             track.generate();
+            if (socket) {
+                socket.emit('track_data', { length: track.length, obstacles: track.obstacles });
+            }
             rivals.forEach(r => r.reset());
             cameraX = player.x - 150;
             messageOverlay.classList.add('hidden');
@@ -2238,7 +2284,8 @@
         function updateTimeDisplay(ms) { timeDisplay.textContent = formatTime(ms); }
 
         // --- イベントリスナー ---
-        startBtn.addEventListener('click', startGame);
+        startBtnPlay.addEventListener('click', () => { isHostOnly = false; startGame(); });
+        startBtnHost.addEventListener('click', () => { isHostOnly = true; startGame(); });
 
         window.addEventListener('keydown', (e) => {
             const code = e.code;
@@ -2281,17 +2328,29 @@
             if (qrNote && /^(localhost|127\.0\.0\.1)/.test(location.hostname)) {
                 qrNote.textContent = '※同じWi-Fi上でPCのIPアドレスで公開してください';
             }
-            // QR画像（外部生成API）。読み込めない場合はURLテキストで代替
-            const api = 'https://api.qrserver.com/v1/create-qr-code/?size=160x160&margin=4&data=' + encodeURIComponent(url);
-            qrImg.onerror = () => { qrImg.style.display = 'none'; };
-            qrImg.src = api;
+            // QR画像（JSライブラリによるDataURI生成）
+            if (typeof QRCode !== 'undefined') {
+                QRCode.toDataURL(url, { width: 160, margin: 1 }, function (err, dataUrl) {
+                    if (err) {
+                        qrImg.style.display = 'none';
+                    } else {
+                        qrImg.src = dataUrl;
+                    }
+                });
+            } else {
+                qrImg.style.display = 'none';
+            }
         })();
 
         // 初期描画
         if (!isController) {
             track.generate();
             track.draw(player);
+        } else {
+            // コントローラーでも初期描画を開始
+            window.gameLoop();
         }
+        } // End of "if (isController) { ... } else { ... }" block
     </script>
 </body>
 

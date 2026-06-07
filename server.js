@@ -89,6 +89,20 @@ io.on('connection', (socket) => {
         }
     });
 
+    // ホストから送られてくる全プレイヤーの状態をクライアントにブロードキャスト
+    socket.on('host_state', (data) => {
+        if (socket.id === hostId) {
+            socket.broadcast.emit('host_state', data);
+        }
+    });
+
+    // ホストから送られてくるコースデータをクライアントにブロードキャスト
+    socket.on('track_data', (data) => {
+        if (socket.id === hostId) {
+            socket.broadcast.emit('track_data', data);
+        }
+    });
+
     // 切断時の処理
     socket.on('disconnect', () => {
         console.log(`User disconnected: ${socket.id}`);
