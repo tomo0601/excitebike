@@ -544,6 +544,7 @@
                     }
                 });
             }
+        } // ← ホスト専用のソケット設定はここまで。以降のゲーム本体は host/controller 両方で実行する
 
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
@@ -2488,7 +2489,6 @@
             // コントローラーでも初期描画を開始
             window.gameLoop();
         }
-        } // End of "if (isController) { ... } else { ... }" block
     </script>
 </body>
 
