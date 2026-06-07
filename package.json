@@ -1,0 +1,16 @@
+{
+  "name": "excitebike",
+  "version": "1.0.0",
+  "description": "ファミコン風モトクロスレースゲーム（単一HTML・静的サイト）。 スマホはタイトル画面のQRコードを読み取って参加できます。",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3"
+  }
+}
