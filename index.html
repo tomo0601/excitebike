@@ -1,0 +1,2298 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>EXCITE BIKE FC｜FC風モトクロスレーサー</title>
+    <!-- CDNからSocket.IOを読み込む（サーバー分離構成用） -->
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <meta name="description" content="ファミコン風のモトクロスレースゲーム。スマホはQRコードを読み取って参加！ターボとTEMP管理で3周のベストタイムを目指せ。">
+    <meta name="theme-color" content="#3ca0e8">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <!-- OGP（SNS共有時の見た目） -->
+    <meta property="og:title" content="EXCITE BIKE FC｜FC風モトクロスレーサー">
+    <meta property="og:description" content="QRコードを読み取ってスマホからも参加！3周のベストタイムを目指せ。">
+    <meta property="og:type" content="website">
+    <!-- 絵文字ファビコン（favicon.icoの404回避） -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏍️</text></svg>">
+    <style>
+        /* --- 全体 --- */
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            color: white;
+            font-family: 'Courier New', Courier, monospace;
+            /* レトロなフォント */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            image-rendering: pixelated;
+            /* ドット絵をくっきり表示 */
+        }
+
+        #game-container {
+            position: relative;
+            width: 768px;
+            /* ファミコン解像度の倍数 */
+            height: 480px;
+            border: 4px solid #fff;
+            /* box-shadow: 0 0 20px rgba(255, 255, 255, 0.2); レトロ感重視で削除 */
+            overflow: hidden;
+            background-color: #64b0ff;
+            /* 空の色 */
+        }
+
+        canvas {
+            display: block;
+            background: transparent;
+        }
+
+        /* --- UIレイヤー --- */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+        }
+
+        /* --- 上部HUD (BEST TIME) --- */
+        #top-hud {
+            position: absolute;
+            top: 60px; /* テントの青い帯の中に配置 */
+            width: 100%;
+            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 2px 2px 0 #000;
+            background-color: transparent;
+            z-index: 10;
+        }
+
+        /* --- 下部HUD (TEMP, TIME) --- */
+        #bottom-hud {
+            width: 100%;
+            height: 64px; /* 実機のように下部のコンパクトなステータスバー */
+            background-color: #000;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            box-sizing: border-box;
+            border-top: none;
+        }
+
+        .hud-panel {
+            text-align: center;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .hud-label {
+            font-size: 24px;
+            color: #e74c3c; /* 赤 */
+            text-shadow: none;
+            font-weight: bold;
+            font-family: 'Impact', sans-serif;
+            letter-spacing: 2px;
+        }
+
+        .hud-value {
+            font-size: 28px;
+            color: #fff;
+            font-weight: bold;
+            text-shadow: none;
+            border: 3px solid #3498db; /* 青枠 */
+            padding: 4px 15px;
+            background-color: #000;
+        }
+
+        /* --- TEMPゲージ --- */
+        #temp-panel {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        #temp-gauge-wrapper {
+            display: flex;
+            align-items: center;
+        }
+        
+        .temp-decoration {
+            width: 15px;
+            height: 30px;
+            border: 3px solid #3498db;
+            background-color: #000;
+        }
+
+        #temp-gauge-container {
+            width: 150px;
+            height: 30px;
+            border-top: 3px solid #3498db;
+            border-bottom: 3px solid #3498db;
+            background-color: #000;
+            display: flex;
+            /* 2分割 */
+        }
+
+        #temp-gauge-green,
+        #temp-gauge-red {
+            height: 100%;
+            transition: width 0.1s;
+        }
+
+        #temp-gauge-green {
+            background-color: #2ecc71;
+            width: 100%;
+        }
+
+        #temp-gauge-red {
+            background-color: #e74c3c;
+            width: 0%;
+        }
+
+        #temp-gauge-container.overheating #temp-gauge-green {
+            width: 0%;
+        }
+
+        #temp-gauge-container.overheating #temp-gauge-red {
+            width: 100%;
+        }
+
+
+        /* --- メッセージオーバーレイ --- */
+        #message-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 18px 24px;
+            border: 4px solid white;
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            width: min(640px, 92%);
+            max-height: 94%;
+            overflow-y: auto;
+            box-sizing: border-box;
+        }
+
+        /* 操作説明とQRを横並びに */
+        .overlay-row {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+            gap: 24px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 40px;
+            color: #f1c40f;
+            text-shadow: 4px 4px 0 #000;
+            font-family: 'Impact', sans-serif;
+            /* より力強いフォント */
+        }
+
+        #game-subtitle {
+            font-size: 20px;
+        }
+
+        button {
+            padding: 10px 30px;
+            font-size: 24px;
+            font-family: inherit;
+            font-weight: bold;
+            cursor: pointer;
+            background-color: #e67e22;
+            color: white;
+            border: 4px solid #fff;
+            box-shadow: 4px 4px 0 #000;
+            transition: transform 0.1s;
+        }
+
+        button:hover {
+            background-color: #d35400;
+        }
+
+        button:active {
+            transform: translate(4px, 4px);
+            box-shadow: none;
+        }
+
+        .controls-info {
+            font-size: 16px;
+            color: #ccc;
+            text-align: left;
+            margin-top: 10px;
+        }
+
+        .controls-info p {
+            margin: 5px 0;
+        }
+
+        /* --- スマホ参加用QR --- */
+        #qr-box {
+            margin-top: 14px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .qr-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #f1c40f;
+            letter-spacing: 1px;
+        }
+
+        #qr-img {
+            background: #fff;
+            padding: 8px;
+            border: 3px solid #fff;
+            box-shadow: 4px 4px 0 #000;
+            image-rendering: pixelated;
+        }
+
+        #qr-url {
+            font-size: 11px;
+            color: #9fd8ff;
+            word-break: break-all;
+            max-width: 240px;
+            text-align: center;
+        }
+
+        .qr-note {
+            font-size: 12px;
+            color: #ccc;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* --- レスポンシブ & モバイル操作 --- */
+        @media (max-width: 768px) {
+            #game-container {
+                width: 100vw;
+                height: 62.5vw;
+                /* 768x480 比率 */
+                border: none;
+            }
+
+            #top-hud {
+                font-size: 16px;
+            }
+
+            #bottom-hud {
+                height: 60px;
+            }
+
+            .hud-label {
+                font-size: 12px;
+            }
+
+            .hud-value {
+                font-size: 16px;
+                padding: 2px 5px;
+            }
+
+            #temp-gauge-container {
+                width: 80px;
+                height: 14px;
+            }
+
+            h1 {
+                font-size: 32px;
+            }
+        }
+
+        #mobile-controls {
+            display: none;
+            width: 100%;
+            max-width: 768px;
+            padding: 10px;
+            justify-content: space-between;
+            box-sizing: border-box;
+            margin-top: 10px;
+            background-color: #222;
+            border-top: 4px solid #fff;
+        }
+
+        .control-btn-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-action {
+            width: 60px;
+            height: 60px;
+            border-radius: 8px;
+            background-color: #333;
+            border: 3px solid white;
+            color: white;
+            font-size: 24px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            user-select: none;
+            box-shadow: 3px 3px 0 #000;
+        }
+
+        .btn-action:active {
+            background-color: #555;
+            transform: translate(3px, 3px);
+            box-shadow: none;
+        }
+
+        @media (hover: none) and (pointer: coarse) {
+            #mobile-controls {
+                display: flex;
+            }
+
+            .controls-info {
+                display: none;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="768" height="480"></canvas>
+
+        <div id="ui-layer">
+            <!-- 上部HUD -->
+            <div id="top-hud">
+                BEST <span id="best-time">1:16:00</span>
+            </div>
+
+            <!-- 下部HUD -->
+            <div id="bottom-hud">
+                <div class="hud-panel">
+                    <div class="hud-label">TIME</div>
+                    <div class="hud-value" id="time-display">0:00:00</div>
+                </div>
+                <div class="hud-panel" id="temp-panel">
+                    <div class="hud-label">TEMP</div>
+                    <div id="temp-gauge-wrapper">
+                        <div class="temp-decoration"></div>
+                        <div id="temp-gauge-container">
+                            <div id="temp-gauge-green"></div>
+                            <div id="temp-gauge-red"></div>
+                        </div>
+                        <div class="temp-decoration"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="message-overlay">
+            <h1 id="game-title">EXCITE BIKE FC</h1>
+            <p id="game-subtitle">目指せベストタイム！</p>
+            <div class="overlay-row">
+                <div class="controls-info" id="desktop-controls">
+                    <p><strong>[X]</strong> アクセル (通常)</p>
+                    <p><strong>[Z]</strong> ターボ (TEMP上昇)</p>
+                    <p><strong>[↑/↓]</strong> レーン移動</p>
+                    <p><strong>[←/→]</strong> 姿勢制御</p>
+                </div>
+                <div id="qr-box">
+                    <div class="qr-title">📱 スマホで参加</div>
+                    <img id="qr-img" alt="参加用QRコード" width="108" height="108">
+                    <div id="qr-url"></div>
+                    <div class="qr-note" id="qr-note">QRを読み取って参加</div>
+                </div>
+            </div>
+            <button id="start-btn">START</button>
+        </div>
+    </div>
+
+    <!-- モバイル用コントロール -->
+    <div id="mobile-controls">
+        <div class="control-btn-group">
+            <div style="display:flex; flex-direction:column; gap:5px; align-items:center;">
+                <div class="btn-action" id="btn-up">↑</div>
+                <div style="display:flex; gap:10px;">
+                    <div class="btn-action" id="btn-left">←</div>
+                    <div class="btn-action" id="btn-right">→</div>
+                </div>
+                <div class="btn-action" id="btn-down">↓</div>
+            </div>
+        </div>
+        <div class="control-btn-group">
+            <div class="btn-action" id="btn-accel" style="background-color:#e67e22;">X</div>
+            <div class="btn-action" id="btn-turbo" style="background-color:#e74c3c;">Z</div>
+        </div>
+    </div>
+
+    <script>
+        
+        // --- デプロイ設定 ---
+        // XSERVER等の別サーバーでHTMLを配信する場合、ここをRenderなどのバックエンドURLに変更します
+        // 例: const BACKEND_URL = 'https://your-backend.onrender.com';
+        const BACKEND_URL = ''; // 空文字の場合は同じサーバーに接続します
+
+        const socket = typeof io !== 'undefined' ? io(BACKEND_URL) : null;
+        const urlParams = new URLSearchParams(window.location.search);
+        const isController = urlParams.get('role') === 'controller';
+
+        if (isController) {
+            // コントローラー用のUI設定
+            document.getElementById('game-container').style.display = 'none';
+            document.getElementById('mobile-controls').style.display = 'flex';
+            document.getElementById('mobile-controls').style.flexDirection = 'row';
+            document.getElementById('mobile-controls').style.height = '100vh';
+            document.getElementById('mobile-controls').style.alignItems = 'center';
+            document.getElementById('mobile-controls').style.margin = '0';
+            
+            document.body.style.backgroundColor = '#222';
+            document.body.innerHTML += '<div style="position:absolute; top:20px; left:20px; color:#fff; font-size:24px;" id="controller-msg">ホストに接続しました。画面を見て操作してください。</div>';
+
+            if (socket) {
+                socket.emit('register', 'controller');
+                
+                socket.on('player_info', (info) => {
+                    // 自分の色が割り当てられたらUIに反映するなどの処理も可能
+                    document.getElementById('controller-msg').style.color = info.color.frame;
+                });
+            }
+
+            // コントローラーの入力をサーバーへ送信
+            function sendInput(type, code) {
+                if (socket) socket.emit('player_input', { type, code });
+            }
+
+            // モバイル操作のバインド上書き
+            function bindTouch(id, code) {
+                const btn = document.getElementById(id);
+                if (!btn) return;
+                btn.addEventListener('touchstart', (e) => { e.preventDefault(); sendInput('keydown', code); });
+                btn.addEventListener('touchend', (e) => { e.preventDefault(); sendInput('keyup', code); });
+                btn.addEventListener('touchcancel', (e) => { e.preventDefault(); sendInput('keyup', code); });
+            }
+
+            if (!isController) {
+            bindTouch('btn-accel', 'KeyX'); bindTouch('btn-turbo', 'KeyZ');
+            
+            
+        }
+            bindTouch('btn-up', 'ArrowUp'); bindTouch('btn-down', 'ArrowDown');
+            bindTouch('btn-left', 'ArrowLeft'); bindTouch('btn-right', 'ArrowRight');
+
+        } else {
+            // ホスト用の設定
+            if (socket) {
+                socket.emit('register', 'host');
+
+                socket.on('current_players', (playersMap) => {
+                    for (const id in playersMap) {
+                        const p = playersMap[id];
+                        const np = new Player(p.color);
+                        np.targetLane = p.lane;
+                        np.currentLane = p.lane;
+                        networkPlayers[id] = np;
+                    }
+                });
+
+                socket.on('player_joined', (p) => {
+                    const np = new Player(p.color);
+                    np.targetLane = p.lane;
+                    np.currentLane = p.lane;
+                    networkPlayers[p.id] = np;
+                });
+
+                socket.on('player_left', (p) => {
+                    if (networkPlayers[p.id]) {
+                        delete networkPlayers[p.id];
+                    }
+                });
+
+                socket.on('player_input', (data) => {
+                    const np = networkPlayers[data.id];
+                    if (np) {
+                        if (data.input.type === 'keydown') {
+                            if (!np.keys[data.input.code] && np.keysJustPressed.hasOwnProperty(data.input.code)) {
+                                np.keysJustPressed[data.input.code] = true;
+                            }
+                            np.keys[data.input.code] = true;
+                        } else if (data.input.type === 'keyup') {
+                            np.keys[data.input.code] = false;
+                        }
+                    }
+                });
+            }
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        // UI要素
+        const timeDisplay = document.getElementById('time-display');
+        const bestTimeDisplay = document.getElementById('best-time');
+        const tempGaugeContainer = document.getElementById('temp-gauge-container');
+        const tempGaugeGreen = document.getElementById('temp-gauge-green');
+        const tempGaugeRed = document.getElementById('temp-gauge-red');
+        const messageOverlay = document.getElementById('message-overlay');
+        const gameTitle = document.getElementById('game-title');
+        const gameSubtitle = document.getElementById('game-subtitle');
+        const startBtn = document.getElementById('start-btn');
+        const topHud = document.getElementById('top-hud');
+        topHud.classList.add('hidden'); // タイトル/結果画面では非表示
+
+        // ゲーム定数
+        const GAME_WIDTH = 768;
+        const GAME_HEIGHT = 480;
+        canvas.width = GAME_WIDTH;
+        canvas.height = GAME_HEIGHT;
+
+        const STATE_START = 0;
+        const STATE_PLAYING = 1;
+        const STATE_GAMEOVER = 2;
+        const STATE_CRASHED = 3;
+        const STATE_COUNTDOWN = 4;
+
+        let gameState = STATE_START;
+        let cameraX = 0;
+        let animationId;
+        let lastTime = 0;
+        let startTime = 0;
+        let countdownStart = 0; // カウントダウン開始時刻
+        let elapsedTime = 0;
+        let bestTime = localStorage.getItem('exciteBikeBestTime') || '1:30:00'; // デフォルト
+        bestTimeDisplay.textContent = bestTime;
+
+        // キー入力状態
+        const keys = { ArrowRight: false, ArrowLeft: false, ArrowUp: false, ArrowDown: false, KeyX: false, KeyZ: false };
+        const keysJustPressed = { ArrowUp: false, ArrowDown: false };
+
+        // --- パーティクルシステム (砂埃・排気・火花など) ---
+        const particles = [];
+        function spawnParticle(opts) {
+            // 画面上に出っぱなしにならないよう上限を設ける
+            if (particles.length > 240) particles.shift();
+            particles.push(Object.assign({
+                x: 0, y: 0, vx: 0, vy: 0, life: 30, maxLife: 30,
+                size: 4, color: '#fff', gravity: 0, shrink: true, square: true
+            }, opts));
+        }
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += p.gravity;
+                p.vx *= 0.96;
+                p.life--;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+        }
+        function drawParticles() {
+            // ワールド座標で保持し、カメラ分だけずらして描画
+            for (const p of particles) {
+                const t = p.life / p.maxLife;
+                ctx.globalAlpha = Math.max(0, Math.min(1, t));
+                ctx.fillStyle = p.color;
+                const s = p.shrink ? Math.max(1, p.size * t) : p.size;
+                const dx = p.x - cameraX;
+                if (dx < -20 || dx > GAME_WIDTH + 20) continue;
+                if (p.square) {
+                    ctx.fillRect(dx - s / 2, p.y - s / 2, s, s);
+                } else {
+                    ctx.beginPath();
+                    ctx.arc(dx, p.y, s / 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        // --- サウンド（Web Audioで合成。外部ファイル不要） ---
+        const sfx = {
+            ctx: null, started: false,
+            master: null, engineGain: null, engineFilter: null, engineOsc: [],
+            turboGain: null, turboOsc: null,
+            init() {
+                if (this.started) return;
+                const Ctx = window.AudioContext || window.webkitAudioContext;
+                if (!Ctx) return;
+                this.ctx = new Ctx();
+                this.master = this.ctx.createGain();
+                this.master.gain.value = 0.5;
+                this.master.connect(this.ctx.destination);
+
+                // エンジン音：2基のノコギリ波＋ローパス
+                this.engineFilter = this.ctx.createBiquadFilter();
+                this.engineFilter.type = 'lowpass';
+                this.engineFilter.frequency.value = 800;
+                this.engineGain = this.ctx.createGain();
+                this.engineGain.gain.value = 0;
+                this.engineFilter.connect(this.engineGain);
+                this.engineGain.connect(this.master);
+                for (let i = 0; i < 2; i++) {
+                    const o = this.ctx.createOscillator();
+                    o.type = 'sawtooth';
+                    o.frequency.value = 55;
+                    o.detune.value = i * 10;
+                    o.connect(this.engineFilter);
+                    o.start();
+                    this.engineOsc.push(o);
+                }
+                // ターボの高周波ホイーン
+                this.turboGain = this.ctx.createGain();
+                this.turboGain.gain.value = 0;
+                this.turboGain.connect(this.master);
+                const tf = this.ctx.createBiquadFilter();
+                tf.type = 'bandpass'; tf.frequency.value = 1400; tf.Q.value = 4;
+                this.turboOsc = this.ctx.createOscillator();
+                this.turboOsc.type = 'sawtooth'; this.turboOsc.frequency.value = 400;
+                this.turboOsc.connect(tf); tf.connect(this.turboGain);
+                this.turboOsc.start();
+
+                this.started = true;
+            },
+            resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); },
+
+            // 毎フレーム：エンジン回転とターボ音を更新
+            updateEngine(speed, on, turbo, overheated) {
+                if (!this.ctx) return;
+                const now = this.ctx.currentTime;
+                if (on) {
+                    const base = 52 + speed * 7;                 // 回転数（速度連動）
+                    for (const o of this.engineOsc) o.frequency.setTargetAtTime(base, now, 0.05);
+                    this.engineFilter.frequency.setTargetAtTime(420 + speed * 130, now, 0.05);
+                    this.engineGain.gain.setTargetAtTime(overheated ? 0.04 : 0.15, now, 0.08);
+                } else {
+                    this.engineGain.gain.setTargetAtTime(0, now, 0.15);
+                }
+                const tv = (turbo && on && !overheated) ? 0.10 : 0;
+                this.turboGain.gain.setTargetAtTime(tv, now, 0.05);
+                if (turbo) this.turboOsc.frequency.setTargetAtTime(520 + speed * 45, now, 0.05);
+            },
+            engineOff() {
+                if (!this.ctx) return;
+                this.engineGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.1);
+                this.turboGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.1);
+            },
+
+            // ジャンプ：上昇するヒュッという音
+            jump() {
+                if (!this.ctx) return;
+                const t = this.ctx.currentTime;
+                const o = this.ctx.createOscillator();
+                const g = this.ctx.createGain();
+                o.type = 'sine';
+                o.frequency.setValueAtTime(280, t);
+                o.frequency.exponentialRampToValueAtTime(880, t + 0.18);
+                g.gain.setValueAtTime(0.0001, t);
+                g.gain.exponentialRampToValueAtTime(0.22, t + 0.02);
+                g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+                o.connect(g); g.connect(this.master);
+                o.start(t); o.stop(t + 0.28);
+            },
+
+            // オーバーヒート：警告ブザー（下降音×2）
+            overheat() {
+                if (!this.ctx) return;
+                const t0 = this.ctx.currentTime;
+                for (let i = 0; i < 2; i++) {
+                    const t = t0 + i * 0.2;
+                    const o = this.ctx.createOscillator();
+                    const g = this.ctx.createGain();
+                    o.type = 'square';
+                    o.frequency.setValueAtTime(480, t);
+                    o.frequency.linearRampToValueAtTime(200, t + 0.17);
+                    g.gain.setValueAtTime(0.0001, t);
+                    g.gain.exponentialRampToValueAtTime(0.18, t + 0.02);
+                    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+                    o.connect(g); g.connect(this.master);
+                    o.start(t); o.stop(t + 0.19);
+                }
+            }
+        };
+
+        // --- プレイヤー ---
+        class Player {
+            constructor() {
+                this.reset();
+                this.width = 50;  // ドット絵に合わせて調整
+                this.height = 30;
+                this.wheelBase = 30;
+            }
+
+            reset() {
+                this.x = 100;
+                this.y = 330;
+                this.vx = 0;
+                this.vy = 0;
+                this.speed = 0;
+                this.maxSpeedNormal = 10;
+                this.maxSpeedTurbo = 16;
+                this.acceleration = 0.15;
+                this.deceleration = 0.08;
+                this.gravity = 0.5;
+                this.isGrounded = true;
+                this.angle = 0;
+                this.targetLane = 1;
+                this.currentLane = 1;
+                this.heat = 0;
+                this.maxHeat = 100;
+                this.overheated = false;
+                this.coolingRate = 0.5;
+                this.heatingRate = 1.2;
+                this.crashTimer = 0;
+                this.overheatTimer = 0; // オーバーヒート解除までのタイマー
+                this.wheelSpin = 0;     // 車輪の回転角(アニメ用)
+                this.exhaustTimer = 0;  // 排気・砂埃の生成間隔
+                this.wasGrounded = true;// 着地エフェクト判定用
+            }
+
+            update() {
+                if (gameState === STATE_CRASHED) { this.handleCrash(); return; }
+
+                // レーン移動
+                if (this.isGrounded) {
+                    if (this.keysJustPressed.ArrowUp && this.targetLane > 0) this.targetLane--;
+                    if (this.keysJustPressed.ArrowDown && this.targetLane < 3) this.targetLane++;
+                }
+                this.currentLane += (this.targetLane - this.currentLane) * 0.3; // 少し早く追従
+                const laneOffsetY = this.currentLane * 20;
+
+                // --- 速度とTEMP制御 ---
+                let targetMaxSpeed = 0;
+                let isAccelerating = false;
+
+                if (this.overheated) {
+                    // オーバーヒート中：冷却のみ、操作不可
+                    this.heat = Math.max(0, this.heat - this.coolingRate * 2);
+                    this.overheatTimer--;
+                    if (this.heat <= 0 && this.overheatTimer <= 0) {
+                        this.overheated = false;
+                        tempGaugeContainer.classList.remove('overheating');
+                    }
+                } else {
+                    // 通常時
+                    if (this.keys.KeyZ) { // ターボ
+                        targetMaxSpeed = this.maxSpeedTurbo;
+                        this.heat = Math.min(this.maxHeat, this.heat + this.heatingRate);
+                        isAccelerating = true;
+                        if (this.heat >= this.maxHeat) {
+                            this.overheated = true;
+                            this.overheatTimer = 120; // 約2秒間操作不能
+                            tempGaugeContainer.classList.add('overheating');
+                            sfx.overheat(); // オーバーヒート警告音
+                        }
+                    } else if (this.keys.KeyX) { // 通常アクセル
+                        targetMaxSpeed = this.maxSpeedNormal;
+                        this.heat = Math.max(0, this.heat - this.coolingRate * 0.5);
+                        isAccelerating = true;
+                    } else { // アクセルオフ
+                        this.heat = Math.max(0, this.heat - this.coolingRate);
+                    }
+                }
+
+                // 速度更新
+                if (isAccelerating) {
+                    if (this.speed < targetMaxSpeed) this.speed += this.acceleration;
+                    else this.speed -= this.deceleration;
+                } else {
+                    this.speed = Math.max(0, this.speed - this.deceleration * 1.5);
+                }
+                this.vx = this.speed;
+
+                // 位置更新
+                this.x += this.vx;
+                cameraX = this.x - 150; // カメラ追従位置調整
+
+                // --- 物理演算 ---
+                if (!this.isGrounded) {
+                    this.vy += this.gravity;
+                    this.y += this.vy;
+                    // 空中姿勢制御
+                    if (this.keys.ArrowRight) this.angle = Math.min(Math.PI / 3, this.angle + 0.07);
+                    else if (this.keys.ArrowLeft) this.angle = Math.max(-Math.PI / 3, this.angle - 0.07);
+                }
+
+                // 地形判定
+                const groundYBase = 330;
+                let onTrack = false;
+                let trackY = groundYBase;
+                let trackAngle = 0;
+
+                for (const seg of track.segments) {
+                    if (this.x >= seg.x && this.x < seg.x + seg.width) {
+                        const ratio = (this.x - seg.x) / seg.width;
+                        trackY = seg.y1 + (seg.y2 - seg.y1) * ratio;
+                        trackAngle = Math.atan2(seg.y2 - seg.y1, seg.width);
+                        onTrack = true;
+
+                        // 障害物判定 (現在のレーンのみ)
+                        if (seg.lane === Math.round(this.currentLane)) {
+                            if (seg.type === 'mud' && this.isGrounded) this.speed *= 0.92; // 泥減速
+                            if (seg.type === 'hurdle') {
+                                const hurdleY = seg.y1 + seg.lane * 20;
+                                if (Math.abs(this.x - (seg.x + seg.width / 2)) < 10 &&
+                                    this.y > hurdleY - seg.height + 10) { // 当たり判定調整
+                                    this.crash(true); // ハードル衝突
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+
+                const actualTrackY = trackY + laneOffsetY;
+
+                // 着地・接地判定
+                if (this.y >= actualTrackY) {
+                    if (!this.isGrounded) { // 着地
+                        const angleDiff = Math.abs(this.angle - trackAngle);
+                        // 着地判定厳格化
+                        if (angleDiff > Math.PI / 3.5 || (this.angle > Math.PI / 5 && trackAngle <= 0)) {
+                            this.crash(false); // 転倒クラッシュ
+                            this.y = actualTrackY;
+                        } else {
+                            this.isGrounded = true;
+                            this.vy = 0;
+                            this.y = actualTrackY;
+                            this.angle = trackAngle;
+                        }
+                    } else { // 接地中
+                        this.y = actualTrackY;
+                        this.vy = 0;
+                        this.angle += (trackAngle - this.angle) * 0.3;
+                    }
+                } else {
+                    this.isGrounded = false;
+                }
+
+                // ジャンプ飛び出し
+                if (this.isGrounded && this.speed > 0) {
+                    const nextX = this.x + this.speed + 5; // 少し先を見る
+                    let nextTrackY = groundYBase;
+                    for (const seg of track.segments) {
+                        if (nextX >= seg.x && nextX < seg.x + seg.width) {
+                            const ratio = (nextX - seg.x) / seg.width;
+                            nextTrackY = seg.y1 + (seg.y2 - seg.y1) * ratio;
+                            break;
+                        }
+                    }
+                    const nextActualY = nextTrackY + laneOffsetY;
+                    if (this.y < nextActualY - 3) { // 地形が下がる
+                        this.isGrounded = false;
+                        // 飛び出しの勢いを追加
+                        this.vy = Math.sin(this.angle) * this.speed * 0.8;
+                        this.vy -= Math.abs(this.angle) * 5; // 角度に応じて上方向へ
+                        if (this.vy < -5) sfx.jump(); // しっかり跳んだときだけ効果音
+                    }
+                }
+
+                // ハイパージャンプ台：同レーンで踏み切ると通常より大きく打ち上げる
+                if (this.isGrounded && this.speed > 1.5) {
+                    for (const seg of track.segments) {
+                        if (seg.type !== 'hyperramp') continue;
+                        if (seg.lane !== Math.round(this.currentLane)) continue;
+                        const launchX = seg.x + seg.width * 0.62; // 踏み切り（リップ）位置
+                        if (this.x >= launchX && this.x < seg.x + seg.width + 10) {
+                            this.isGrounded = false;
+                            // 通常ジャンプ（ピーク約20px）の数倍の高さへ
+                            this.vy = -(8.5 + this.speed * 0.35);
+                            this.angle = -Math.PI / 14; // ややノーズアップで打ち上がる
+                            this.y -= 5;
+                            sfx.jump(); // ハイパージャンプ効果音
+                            // 打ち上げの砂煙
+                            for (let i = 0; i < 12; i++) {
+                                spawnParticle({
+                                    x: this.x - 10 + Math.random() * 20,
+                                    y: this.y + 10,
+                                    vx: (Math.random() - 0.5) * 5,
+                                    vy: Math.random() * 2 + 0.5,
+                                    gravity: 0.18,
+                                    life: 18 + Math.random() * 12,
+                                    maxLife: 30,
+                                    size: 5 + Math.random() * 5,
+                                    color: Math.random() < 0.5 ? '#e8c39a' : '#c9975a'
+                                });
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                // --- エフェクト生成 ---
+                // 車輪回転（速度に比例）
+                this.wheelSpin += this.speed * 0.08;
+
+                // 着地時の砂煙
+                if (this.isGrounded && !this.wasGrounded && this.speed > 1) {
+                    const burst = Math.min(14, 4 + Math.floor(this.speed));
+                    for (let i = 0; i < burst; i++) {
+                        spawnParticle({
+                            x: this.x - 15 + Math.random() * 30,
+                            y: this.y + 8,
+                            vx: (Math.random() - 0.5) * 4,
+                            vy: -Math.random() * 3,
+                            gravity: 0.15,
+                            life: 18 + Math.random() * 14,
+                            maxLife: 30,
+                            size: 5 + Math.random() * 5,
+                            color: Math.random() < 0.5 ? '#e8c39a' : '#c9975a'
+                        });
+                    }
+                }
+                this.wasGrounded = this.isGrounded;
+
+                // 走行中の砂埃 & 排気
+                if (this.isGrounded && this.speed > 1) {
+                    this.exhaustTimer--;
+                    if (this.exhaustTimer <= 0) {
+                        this.exhaustTimer = this.keys.KeyZ ? 1 : 3;
+                        // 後輪が蹴り上げる砂
+                        spawnParticle({
+                            x: this.x - 18,
+                            y: this.y + 6,
+                            vx: -this.speed * 0.25 - Math.random() * 1.5,
+                            vy: -Math.random() * 2.5 - 0.5,
+                            gravity: 0.14,
+                            life: 16 + Math.random() * 10,
+                            maxLife: 26,
+                            size: 4 + Math.random() * 4,
+                            color: Math.random() < 0.5 ? '#d9a564' : '#b07c3c'
+                        });
+                        // 排気煙
+                        spawnParticle({
+                            x: this.x - 24,
+                            y: this.y - 4,
+                            vx: -1 - Math.random(),
+                            vy: -0.4 - Math.random() * 0.6,
+                            gravity: -0.01,
+                            life: 14 + Math.random() * 8,
+                            maxLife: 22,
+                            size: 3 + Math.random() * 3,
+                            color: 'rgba(90,90,90,0.8)',
+                            square: false
+                        });
+                    }
+                }
+
+                // ターボ時の炎
+                if (this.keys.KeyZ && !this.overheated && this.isGrounded) {
+                    spawnParticle({
+                        x: this.x - 26,
+                        y: this.y - 3,
+                        vx: -2 - Math.random() * 2,
+                        vy: (Math.random() - 0.5) * 1.5,
+                        gravity: 0,
+                        life: 8 + Math.random() * 6,
+                        maxLife: 14,
+                        size: 4 + Math.random() * 4,
+                        color: Math.random() < 0.5 ? '#ffce3a' : '#ff6a00',
+                        square: false
+                    });
+                }
+
+                // 冷却装置の取得（同レーンを通過でTEMPを大幅ダウン＆オーバーヒート解除）
+                if (track.coolers) {
+                    const myLane = Math.round(this.currentLane);
+                    for (const c of track.coolers) {
+                        if (c.taken || c.lane !== myLane) continue;
+                        if (Math.abs(this.x - c.x) < 24) {
+                            c.taken = true;
+                            this.heat = 0;
+                            this.overheated = false;
+                            this.overheatTimer = 0;
+                            tempGaugeContainer.classList.remove('overheating');
+                            // 冷気エフェクト
+                            for (let i = 0; i < 14; i++) {
+                                spawnParticle({
+                                    x: this.x + (Math.random() - 0.5) * 24,
+                                    y: this.y - 6 + (Math.random() - 0.5) * 16,
+                                    vx: (Math.random() - 0.5) * 3,
+                                    vy: -Math.random() * 2 - 0.5,
+                                    gravity: -0.02,
+                                    life: 16 + Math.random() * 14,
+                                    maxLife: 30,
+                                    size: 3 + Math.random() * 4,
+                                    color: Math.random() < 0.5 ? '#bfefff' : '#7fd8f0',
+                                    square: false
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // TEMP表示更新
+                const heatPercent = this.heat / this.maxHeat * 100;
+                tempGaugeGreen.style.width = `${100 - heatPercent}%`;
+                tempGaugeRed.style.width = `${heatPercent}%`;
+            }
+
+            crash(isHurdle) {
+                gameState = STATE_CRASHED;
+                this.crashTimer = 150;
+                this.speed = 0; this.vx = 0;
+                this.vy = isHurdle ? -8 : -5; // ハードルは高く飛ぶ
+                this.isGrounded = false;
+                this.angle = -Math.PI / 4; // 後ろ向きに倒れる
+                // クラッシュの砂埃＆火花
+                for (let i = 0; i < 26; i++) {
+                    const ang = Math.random() * Math.PI * 2;
+                    const spd = 2 + Math.random() * 5;
+                    const spark = Math.random() < 0.35;
+                    spawnParticle({
+                        x: this.x, y: this.y,
+                        vx: Math.cos(ang) * spd,
+                        vy: Math.sin(ang) * spd - 2,
+                        gravity: 0.18,
+                        life: 24 + Math.random() * 20,
+                        maxLife: 44,
+                        size: spark ? 3 + Math.random() * 3 : 5 + Math.random() * 5,
+                        color: spark ? (Math.random() < 0.5 ? '#ffd23a' : '#ff5a2c')
+                                     : (Math.random() < 0.5 ? '#d9a564' : '#b07c3c'),
+                        square: !spark
+                    });
+                }
+            }
+
+            handleCrash() {
+                this.crashTimer--;
+                this.vy += this.gravity;
+                this.y += this.vy;
+                this.angle += 0.3; // 回転
+
+                const crashFloorY = 330 + Math.round(this.currentLane) * 20;
+                if (this.y > crashFloorY) {
+                    this.y = crashFloorY;
+                    this.vy = -this.vy * 0.6; // バウンド
+                }
+
+                if (this.crashTimer <= 0) this.resetPositionAfterCrash();
+            }
+
+            resetPositionAfterCrash() {
+                gameState = STATE_PLAYING;
+                this.y = 280; this.vy = 0; this.speed = 0; this.angle = 0;
+                this.heat = 0; this.overheated = false; this.overheatTimer = 0;
+                tempGaugeContainer.classList.remove('overheating');
+                this.x -= 200; // 大きく戻す
+            }
+
+            draw() {
+                const drawX = this.x - cameraX;
+                const drawY = this.y;
+
+                ctx.save();
+                ctx.translate(drawX, drawY);
+                ctx.rotate(this.angle);
+
+                if (gameState === STATE_CRASHED) {
+                    // クラッシュ：バイクと人が分離
+                    this.drawBikeBody();
+                    ctx.save();
+                    ctx.translate(0, -40); // 人を飛ばす
+                    ctx.rotate(this.crashTimer * 0.2);
+                    this.drawRider(true);
+                    ctx.restore();
+                } else {
+                    // 通常
+                    this.drawBikeBody();
+                    this.drawRider(false);
+                }
+                ctx.restore();
+            }
+
+            drawBikeBody() {
+                // 接地影（地面に落ちる楕円）
+                if (this.isGrounded) {
+                    ctx.save();
+                    ctx.rotate(-this.angle);
+                    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+                    ctx.beginPath();
+                    ctx.ellipse(0, 16, 26, 5, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+
+                // 後輪・前輪（フレームより先に描いて奥行きを出す）
+                this.drawWheel(-15, 10);
+                this.drawWheel(16, 10);
+
+                // サスペンション
+                ctx.strokeStyle = '#bdc3c7';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(16, 10); ctx.lineTo(20, -8);
+                ctx.moveTo(-15, 10); ctx.lineTo(-6, -6);
+                ctx.stroke();
+
+                // エンジンブロック
+                ctx.fillStyle = '#4a4a4a';
+                ctx.fillRect(-6, -2, 16, 12);
+                ctx.fillStyle = '#2c2c2c';
+                ctx.fillRect(-6, 6, 16, 4); // 下部の影
+                ctx.fillStyle = '#7f8c8d'; // 冷却フィンのハイライト
+                for (let fx = -4; fx < 9; fx += 3) ctx.fillRect(fx, -1, 1, 8);
+
+                // 赤いフレーム本体（上面ハイライト＋側面影）
+                ctx.fillStyle = this.colorConfig ? this.colorConfig.frame : '#ff5b4a';
+                ctx.fillRect(-22, -12, 44, 6);
+                ctx.fillStyle = this.colorConfig ? this.colorConfig.frameShade : '#d62c1a';
+                ctx.fillRect(-22, -6, 44, 4);
+
+                // シート
+                ctx.fillStyle = '#1a1a1a';
+                ctx.fillRect(-22, -16, 16, 5);
+                ctx.fillStyle = '#333';
+                ctx.fillRect(-22, -16, 16, 2);
+
+                // 前部カウル＋ゼッケンプレート
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.moveTo(18, -16);
+                ctx.lineTo(28, -12);
+                ctx.lineTo(26, -2);
+                ctx.lineTo(18, -4);
+                ctx.closePath();
+                ctx.fill();
+                ctx.fillStyle = '#e74c3c';
+                ctx.fillRect(20, -13, 5, 7); // ゼッケン背景
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(22, -12, 1, 5); // 数字「1」風
+
+                // ハンドルバー
+                ctx.strokeStyle = '#2c3e50';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(20, -8); ctx.lineTo(26, -18);
+                ctx.stroke();
+
+                // マフラー
+                ctx.fillStyle = '#95a5a6';
+                ctx.fillRect(-26, -2, 8, 5);
+                ctx.fillStyle = '#7f8c8d';
+                ctx.fillRect(-26, 1, 8, 2);
+            }
+            drawRider(isCrashed) {
+                // ターボ中はウェアが少し前傾＆発熱で赤み
+                const suit = isCrashed ? '#8d9398' : (this.overheated ? '#c0392b' : (this.colorConfig ? this.colorConfig.suit : '#2e86de'));
+                const suitShade = isCrashed ? '#6c7479' : (this.overheated ? '#922b21' : (this.colorConfig ? this.colorConfig.suitShade : '#1b4f8a'));
+                const lean = (!isCrashed && this.keys.KeyZ && this.isGrounded) ? 2 : 0;
+
+                // 脚（バイクにまたがる）
+                ctx.fillStyle = suitShade;
+                ctx.fillRect(-4, -10, 6, 12);
+                ctx.fillStyle = '#1a1a1a'; // ブーツ
+                ctx.fillRect(-5, 2, 7, 4);
+
+                // 胴体（前傾）
+                ctx.save();
+                ctx.translate(lean, 0);
+                ctx.fillStyle = suit;
+                ctx.fillRect(-6, -26, 16, 17);
+                ctx.fillStyle = suitShade; // 背中側の影
+                ctx.fillRect(-6, -26, 5, 17);
+                // 白いライン
+                ctx.fillStyle = '#ecf0f1';
+                ctx.fillRect(-6, -20, 16, 2);
+
+                // 腕（ハンドルへ）
+                ctx.strokeStyle = suit;
+                ctx.lineWidth = 5;
+                ctx.beginPath();
+                ctx.moveTo(6, -20);
+                ctx.lineTo(18, -12);
+                ctx.stroke();
+                ctx.fillStyle = '#1a1a1a'; // グローブ
+                ctx.fillRect(16, -14, 4, 4);
+
+                // 首
+                ctx.fillStyle = '#e8b88a';
+                ctx.fillRect(4, -30, 5, 5);
+
+                // ヘルメット
+                ctx.fillStyle = isCrashed ? '#7f8c8d' : (this.colorConfig ? this.colorConfig.helmet : '#f1c40f');
+                ctx.beginPath();
+                ctx.arc(7, -33, 7, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = isCrashed ? '#5d6d6e' : '#d4a017'; // 後頭部の影
+                ctx.beginPath();
+                ctx.arc(7, -33, 7, Math.PI * 0.5, Math.PI * 1.5);
+                ctx.fill();
+                // バイザー
+                ctx.fillStyle = '#2c3e50';
+                ctx.fillRect(8, -35, 6, 4);
+                // ハイライト
+                ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                ctx.fillRect(4, -37, 3, 2);
+                ctx.restore();
+            }
+            drawWheel(wx, wy) {
+                ctx.save();
+                ctx.translate(wx, wy);
+                // タイヤ外周（ノブ付き）
+                ctx.fillStyle = '#1a1a1a';
+                ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#2c2c2c';
+                for (let a = 0; a < Math.PI * 2; a += Math.PI / 6) {
+                    const bx = Math.cos(a + this.wheelSpin) * 8.5;
+                    const by = Math.sin(a + this.wheelSpin) * 8.5;
+                    ctx.fillRect(bx - 1.5, by - 1.5, 3, 3);
+                }
+                // リム
+                ctx.fillStyle = '#bdc3c7';
+                ctx.beginPath(); ctx.arc(0, 0, 5.5, 0, Math.PI * 2); ctx.fill();
+                // 回転スポーク
+                ctx.strokeStyle = '#7f8c8d';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                for (let a = 0; a < Math.PI * 2; a += Math.PI / 3) {
+                    ctx.moveTo(0, 0);
+                    ctx.lineTo(Math.cos(a + this.wheelSpin) * 5, Math.sin(a + this.wheelSpin) * 5);
+                }
+                ctx.stroke();
+                // ハブ
+                ctx.fillStyle = '#34495e';
+                ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        // --- ライバルバイク（CPU） ---
+        class Rival {
+            constructor(o) {
+                this.frame = o.frame; this.frameShade = o.frameShade;
+                this.suit = o.suit; this.suitShade = o.suitShade; this.helmet = o.helmet;
+                this.startLane = o.lane; this.baseSpeed = o.baseSpeed; this.startX = o.startX;
+                this.phase = Math.random() * 100;
+                this.reset();
+            }
+            reset() {
+                this.x = this.startX; this.lane = this.startLane;
+                this.y = track.groundY + this.lane * 20;
+                this.angle = 0; this.wheelSpin = 0; this.finished = false;
+                // 強さを毎レース弱〜強でランダム割り当て（巡航速度 7.3〜11.5）
+                this.baseSpeed = 7.3 + Math.random() * 4.2;
+                this.speed = this.baseSpeed;
+            }
+            update() {
+                if (this.finished) return;
+                if (gameState !== STATE_PLAYING && gameState !== STATE_CRASHED) return;
+                // 速度に緩急をつけて自然な追い抜きを演出
+                this.speed = this.baseSpeed + Math.sin(performance.now() / 640 + this.phase) * 0.8;
+                this.x += this.speed;
+                if (this.x >= track.goalX) { this.x = track.goalX; this.finished = true; }
+                // 地形に追従（坂やコブを乗り越える）
+                let trackY = track.groundY, trackAngle = 0;
+                for (const seg of track.segments) {
+                    if (this.x >= seg.x && this.x < seg.x + seg.width) {
+                        const r = (this.x - seg.x) / seg.width;
+                        trackY = seg.y1 + (seg.y2 - seg.y1) * r;
+                        trackAngle = Math.atan2(seg.y2 - seg.y1, seg.width);
+                        break;
+                    }
+                }
+                this.y = trackY + this.lane * 20;
+                this.angle += (trackAngle - this.angle) * 0.3;
+                this.wheelSpin += this.speed * 0.08;
+            }
+            draw() {
+                const dx = this.x - cameraX;
+                if (dx < -50 || dx > GAME_WIDTH + 50) return;
+                ctx.save();
+                ctx.translate(dx, this.y);
+                ctx.rotate(this.angle);
+                // 接地影
+                ctx.save(); ctx.rotate(-this.angle);
+                ctx.fillStyle = 'rgba(0,0,0,0.22)';
+                ctx.beginPath(); ctx.ellipse(0, 16, 24, 5, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+                // タイヤ
+                this.wheel(-15, 10); this.wheel(15, 10);
+                // フレーム
+                ctx.fillStyle = this.frame; ctx.fillRect(-20, -11, 40, 6);
+                ctx.fillStyle = this.frameShade; ctx.fillRect(-20, -5, 40, 4);
+                // エンジン
+                ctx.fillStyle = '#4a4a4a'; ctx.fillRect(-5, -1, 14, 11);
+                // カウル
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.moveTo(17, -15); ctx.lineTo(26, -11); ctx.lineTo(24, -2); ctx.lineTo(17, -4);
+                ctx.closePath(); ctx.fill();
+                // ライダー
+                ctx.fillStyle = this.suitShade; ctx.fillRect(-4, -10, 6, 12);
+                ctx.fillStyle = '#1a1a1a'; ctx.fillRect(-5, 2, 7, 4); // ブーツ
+                ctx.fillStyle = this.suit; ctx.fillRect(-6, -25, 15, 16);
+                ctx.fillStyle = this.suitShade; ctx.fillRect(-6, -25, 5, 16);
+                ctx.fillStyle = '#ecf0f1'; ctx.fillRect(-6, -19, 15, 2);
+                ctx.strokeStyle = this.suit; ctx.lineWidth = 5;
+                ctx.beginPath(); ctx.moveTo(6, -19); ctx.lineTo(17, -12); ctx.stroke();
+                ctx.fillStyle = '#e8b88a'; ctx.fillRect(4, -29, 5, 5); // 首
+                ctx.fillStyle = this.helmet; ctx.beginPath(); ctx.arc(7, -32, 7, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#2c3e50'; ctx.fillRect(8, -34, 6, 4); // バイザー
+                ctx.restore();
+            }
+            wheel(wx, wy) {
+                ctx.save(); ctx.translate(wx, wy);
+                ctx.fillStyle = '#1a1a1a'; ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = '#bdc3c7'; ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = '#7f8c8d'; ctx.lineWidth = 1.5; ctx.beginPath();
+                for (let a = 0; a < Math.PI * 2; a += Math.PI / 3) {
+                    ctx.moveTo(0, 0);
+                    ctx.lineTo(Math.cos(a + this.wheelSpin) * 5, Math.sin(a + this.wheelSpin) * 5);
+                }
+                ctx.stroke();
+                ctx.fillStyle = '#34495e'; ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        // --- コース ---
+        class Track {
+            constructor() {
+                this.segments = [];
+                this.groundY = 330;
+                this.goalX = 0;
+            }
+
+            generate() {
+                this.segments = [];
+                this.bushes = [];
+                this.laps = 3;                 // 同一コースを3周する
+                const G = this.groundY;
+                const CEILING = 254;           // 路面の最高到達点（草地へはみ出さない）
+
+                // ---- まず1周分を lapSegs に生成 ----
+                const lapSegs = [];
+                let x = 0;
+                const push = (seg) => {
+                    seg.x = x; seg.height = seg.height || 0;
+                    seg.lane = (seg.lane === undefined) ? 0 : seg.lane;
+                    lapSegs.push(seg);
+                    x += seg.width;
+                };
+
+                // スタート/フィニッシュ直線
+                push({ width: 400, y1: G, y2: G, type: 'flat' });
+
+                // 1周分のコース生成
+                for (let i = 0; i < 24; i++) {
+                    const y1 = lapSegs[lapSegs.length - 1].y2;
+                    const lane = Math.floor(Math.random() * 4);
+
+                    if (y1 < G - 1) {
+                        // 高所にいるときは必ず地面まで下る（坂の累積=はみ出しを防止）
+                        push({ width: 220 + Math.random() * 120, y1, y2: G, type: 'ramp_down', lane });
+                        continue;
+                    }
+
+                    const rnd = Math.random();
+                    if (rnd < 0.12) {
+                        // 【高台/テーブルトップ】急な上り → 平らな天面 → 下り
+                        const topY = Math.max(CEILING, G - (78 + Math.random() * 22));
+                        push({ width: 110 + Math.random() * 40, y1: G, y2: topY, type: 'ramp_up', lane });        // 急斜面
+                        push({ width: 180 + Math.random() * 170, y1: topY, y2: topY, type: 'flat', lane });        // 天面
+                        push({ width: 140 + Math.random() * 70, y1: topY, y2: G, type: 'ramp_down', lane });       // 下り
+                    } else if (rnd < 0.24) {
+                        // 【ウーブス】連続する小さなコブ（土の起伏。ピンク斜面にはしない）
+                        const bumps = 3 + Math.floor(Math.random() * 3);
+                        for (let b = 0; b < bumps; b++) {
+                            const bh = 16 + Math.random() * 8;
+                            push({ width: 52, y1: G, y2: G - bh, type: 'ramp_up', lane, bump: true });
+                            push({ width: 52, y1: G - bh, y2: G, type: 'ramp_down', lane, bump: true });
+                        }
+                        push({ width: 120 + Math.random() * 100, y1: G, y2: G, type: 'flat', lane });
+                    } else if (rnd < 0.36) {
+                        // 【連続ジャンプ台】リズムセクション（同レーンに2〜3台）
+                        const n = 2 + Math.floor(Math.random() * 2);
+                        for (let k = 0; k < n; k++) {
+                            push({ width: 84, y1: G, y2: G, type: 'hyperramp', height: 28, lane });
+                            push({ width: 130 + Math.random() * 80, y1: G, y2: G, type: 'flat', lane });
+                        }
+                    } else if (rnd < 0.48) {
+                        // 単発ジャンプ台（スロープ地形）
+                        push({ width: 200 + Math.random() * 100, y1: G, y2: Math.max(CEILING, G - (70 + Math.random() * 35)), type: 'ramp_up', lane });
+                    } else if (rnd < 0.58) {
+                        // 単発ハイパージャンプ台
+                        push({ width: 84, y1: G, y2: G, type: 'hyperramp', height: 28, lane });
+                    } else if (rnd < 0.72) {
+                        // 泥
+                        push({ width: 280 + Math.random() * 170, y1: G, y2: G, type: 'mud', lane });
+                    } else if (rnd < 0.85) {
+                        // ハードル（短いセグメント上に1基）
+                        push({ width: 40, y1: G, y2: G, type: 'hurdle', height: 32, lane });
+                        push({ width: 240 + Math.random() * 160, y1: G, y2: G, type: 'flat', lane });
+                    } else {
+                        // 平地
+                        push({ width: 300 + Math.random() * 300, y1: G, y2: G, type: 'flat', lane });
+                    }
+                }
+
+                // 周回の継ぎ目を平らにする仕上げ直線
+                push({ width: 360, y1: G, y2: G, type: 'flat' });
+
+                const lapLength = x;
+                this.lapLength = lapLength;
+
+                // 1周分の茂み
+                const lapBushes = [];
+                for (let bx = 500; bx < lapLength - 150; bx += 220 + Math.random() * 360) {
+                    lapBushes.push({ x: bx, lane: Math.floor(Math.random() * 4) });
+                }
+
+                // 1周分の冷却装置（オーバーヒートを防ぐアイテム）
+                const lapCoolers = [];
+                for (let cx = 900; cx < lapLength - 300; cx += 1400 + Math.random() * 1600) {
+                    lapCoolers.push({ x: cx, lane: Math.floor(Math.random() * 4) });
+                }
+
+                // ---- 1周分を3周ぶん複製（同一コースを3周）----
+                this.coolers = [];
+                for (let L = 0; L < this.laps; L++) {
+                    const off = L * lapLength;
+                    for (const s of lapSegs) {
+                        this.segments.push({ x: s.x + off, width: s.width, y1: s.y1, y2: s.y2, type: s.type, height: s.height, lane: s.lane, bump: s.bump });
+                    }
+                    for (const b of lapBushes) this.bushes.push({ x: b.x + off, lane: b.lane });
+                    for (const c of lapCoolers) this.coolers.push({ x: c.x + off, lane: c.lane, taken: false });
+                }
+
+                // ゴール（3周後）
+                this.goalX = this.laps * lapLength;
+                this.segments.push({ x: this.goalX, width: 800, y1: G, y2: G, type: 'goal', height: 0, lane: 0 });
+            }
+
+            draw(playerObj) {
+                this.drawBackground(); // 背景描画
+
+                // --- 地面の描画 (レイヤー構造で立体感を出す) ---
+                
+                // コース全体の土のベース色（実機エキサイトバイク風の明るいタン）
+                const dirtColor = '#d99a4e';      // 土の表面
+                const dirtShadowColor = '#b07a32'; // 平地段差の影
+                const dirtDotColor = '#a86a28';    // 濃い茶色のテクスチャ
+                const rampFace = '#f0a890';        // ジャンプ台斜面のピンク/サーモン
+                const rampLine = '#c06850';        // 斜面のステップ線
+
+                // コース奥の壁（土のベタ塗り）
+                ctx.fillStyle = dirtColor;
+                ctx.fillRect(0, 250, GAME_WIDTH, GAME_HEIGHT - 250);
+
+                // ジャンプ台などの側面と表面を描画
+                // 奥のレーンから手前に向かって描画することで重なりを表現
+                for (let lane = 0; lane < 4; lane++) {
+                    const laneY = lane * 20;
+
+                    // 1. 表面の色塗り（土のベタ塗り）
+                    ctx.fillStyle = dirtColor;
+                    ctx.beginPath();
+                    for (const seg of this.segments) {
+                        const dx1 = seg.x - cameraX;
+                        const dx2 = dx1 + seg.width;
+                        if (dx2 < 0) continue; if (dx1 > GAME_WIDTH) break;
+                        ctx.lineTo(dx1, seg.y1 + laneY);
+                        ctx.lineTo(dx2, seg.y2 + laneY);
+                    }
+                    ctx.lineTo(GAME_WIDTH, GAME_HEIGHT);
+                    ctx.lineTo(0, GAME_HEIGHT);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // 2. 表面のドット模様（土のテクスチャ）
+                    ctx.fillStyle = dirtDotColor;
+                    for (let i = 0; i < GAME_WIDTH; i += 20) {
+                        for (let j = 0; j < 20; j += 10) {
+                            if ((i + j) % 30 === 0) {
+                                const py = 250 + laneY + j;
+                                ctx.fillRect(i - (cameraX * 0.8) % 20, py, 4, 2);
+                            }
+                        }
+                    }
+
+                    // 3. レーン境界線（平地用の破線）
+                    if (lane < 3) {
+                        ctx.strokeStyle = '#b07a32';
+                        ctx.lineWidth = 2;
+                        ctx.setLineDash([15, 15]); // 破線
+                        ctx.beginPath();
+                        for (const seg of this.segments) {
+                            const dx1 = seg.x - cameraX;
+                            const dx2 = dx1 + seg.width;
+                            if (dx2 < 0) continue; if (dx1 > GAME_WIDTH) break;
+                            ctx.lineTo(dx1, seg.y1 + laneY + 20);
+                            ctx.lineTo(dx2, seg.y2 + laneY + 20);
+                        }
+                        ctx.stroke();
+                        ctx.setLineDash([]); // 元に戻す
+                    }
+
+                    // 4. ジャンプ台の「ピンクのステップ状の面」を土の上に重ねて描画。
+                    //    各レーン20pxの面が積み重なり、実機のような段状の斜面になる
+                    for (const seg of this.segments) {
+                        if (seg.y1 === seg.y2) continue;
+                        const dx1 = seg.x - cameraX;
+                        const dx2 = dx1 + seg.width;
+                        if (dx2 < 0 || dx1 > GAME_WIDTH) continue;
+                        // ウーブス（土のコブ）はピンクにせず、土の陰影だけ付ける
+                        if (seg.bump) {
+                            ctx.fillStyle = (seg.y2 < seg.y1)
+                                ? 'rgba(255,225,170,0.35)'   // 上り面は明るく
+                                : 'rgba(120,75,30,0.30)';     // 下り面は影
+                            ctx.beginPath();
+                            ctx.moveTo(dx1, seg.y1 + laneY);
+                            ctx.lineTo(dx2, seg.y2 + laneY);
+                            ctx.lineTo(dx2, seg.y2 + laneY + 20);
+                            ctx.lineTo(dx1, seg.y1 + laneY + 20);
+                            ctx.closePath();
+                            ctx.fill();
+                            continue;
+                        }
+                        // 面の本体（ピンク/サーモン）
+                        ctx.fillStyle = rampFace;
+                        ctx.beginPath();
+                        ctx.moveTo(dx1, seg.y1 + laneY);
+                        ctx.lineTo(dx2, seg.y2 + laneY);
+                        ctx.lineTo(dx2, seg.y2 + laneY + 20);
+                        ctx.lineTo(dx1, seg.y1 + laneY + 20);
+                        ctx.closePath();
+                        ctx.fill();
+                        // 上端ハイライト
+                        ctx.strokeStyle = '#ffd0c0';
+                        ctx.lineWidth = 1.5;
+                        ctx.beginPath();
+                        ctx.moveTo(dx1, seg.y1 + laneY + 1);
+                        ctx.lineTo(dx2, seg.y2 + laneY + 1);
+                        ctx.stroke();
+                        // 横方向のステップ線（コントゥア）
+                        ctx.strokeStyle = rampLine;
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(dx1, seg.y1 + laneY + 10);
+                        ctx.lineTo(dx2, seg.y2 + laneY + 10);
+                        ctx.stroke();
+                        // レーン境のステップ影（段差感）
+                        ctx.fillStyle = 'rgba(150,70,55,0.4)';
+                        ctx.beginPath();
+                        ctx.moveTo(dx1, seg.y1 + laneY + 17);
+                        ctx.lineTo(dx2, seg.y2 + laneY + 17);
+                        ctx.lineTo(dx2, seg.y2 + laneY + 20);
+                        ctx.lineTo(dx1, seg.y1 + laneY + 20);
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+
+                    // 5. 障害物・泥
+                    for (const seg of this.segments) {
+                        if (seg.lane !== lane) continue;
+                        const dx = seg.x - cameraX;
+                        const dy = seg.y1 + laneY;
+                        if (dx + seg.width < 0 || dx > GAME_WIDTH) continue;
+
+                        if (seg.type === 'hyperramp') { // ハイパージャンプ台（立体的なピンクストライプ踏切台）
+                            const w = seg.width, rampH = seg.height;
+                            const baseY = dy + 2;                    // ランプ足元（このレーンの地面）
+                            const cxC = dx + w / 2;
+                            const depth = 26;                        // 手前への厚み（立体感）
+                            const padY = baseY + depth - 4;          // 厚みの底（接地ライン付近）
+
+                            // --- 1. レーンを示す地面のハザードパッド（黄黒の縞）。
+                            //        ランプ幅より広くし、両脇に"羽"を出してレーンを明示 ---
+                            const padW = w * 0.74;
+                            ctx.save();
+                            ctx.beginPath();
+                            ctx.ellipse(cxC, padY, padW, 8, 0, 0, Math.PI * 2);
+                            ctx.clip();
+                            for (let s = -padW; s < padW; s += 9) {
+                                ctx.fillStyle = (Math.floor((s + padW) / 9) % 2 === 0) ? '#f5c518' : '#1a1a1a';
+                                ctx.fillRect(cxC + s, padY - 10, 9, 20);
+                            }
+                            ctx.restore();
+                            // パッドの白縁取り（背景から浮かせてレーンを明示）
+                            ctx.strokeStyle = '#fff';
+                            ctx.lineWidth = 1.5;
+                            ctx.beginPath();
+                            ctx.ellipse(cxC, padY, padW, 8, 0, 0, Math.PI * 2);
+                            ctx.stroke();
+
+                            // 頂点（側面プロファイル）
+                            const ax = dx, ay = baseY;               // 斜面の下端（左・低）
+                            const bx = dx + w, by = baseY - rampH;   // 斜面の上端（右・踏切）
+                            const cx2 = dx + w, cy2 = baseY;         // 右下
+
+                            // --- 2. 手前へ押し出した側面（厚み）で立体化 ---
+                            // 斜面のフロント面（暗いピンク茶）
+                            ctx.fillStyle = '#9c5a52';
+                            ctx.beginPath();
+                            ctx.moveTo(ax, ay);
+                            ctx.lineTo(bx, by);
+                            ctx.lineTo(bx, by + depth);
+                            ctx.lineTo(ax, ay + depth);
+                            ctx.closePath();
+                            ctx.fill();
+                            // 踏切（右）のフロント面（さらに暗く）
+                            ctx.fillStyle = '#5e2f2c';
+                            ctx.beginPath();
+                            ctx.moveTo(bx, by);
+                            ctx.lineTo(cx2, cy2);
+                            ctx.lineTo(cx2, cy2 + depth);
+                            ctx.lineTo(bx, by + depth);
+                            ctx.closePath();
+                            ctx.fill();
+
+                            // --- 3. 上面（ライド面）：ピンク/クリームの斜めストライプ ---
+                            ctx.save();
+                            ctx.beginPath();
+                            ctx.moveTo(ax, ay);
+                            ctx.lineTo(bx, by);
+                            ctx.lineTo(cx2, cy2);
+                            ctx.closePath();
+                            ctx.clip();
+                            ctx.fillStyle = '#f5e6cc'; // クリーム下地
+                            ctx.fillRect(dx - 4, by - 6, w + 10, rampH + 16);
+                            const m = (by - ay) / (bx - ax);
+                            ctx.strokeStyle = '#ef9aa0';
+                            ctx.lineWidth = 9;
+                            ctx.beginPath();
+                            for (let o = -rampH - 8; o < rampH + w; o += 18) {
+                                const x1 = dx - 6, x2 = dx + w + 6;
+                                ctx.moveTo(x1, ay + m * (x1 - ax) + o);
+                                ctx.lineTo(x2, ay + m * (x2 - ax) + o);
+                            }
+                            ctx.stroke();
+                            ctx.restore();
+
+                            // --- 4. エッジ処理（立体感の締め） ---
+                            // 上端（ライド面のリッジ）を白でハイライト
+                            ctx.strokeStyle = '#ffffff';
+                            ctx.lineWidth = 2;
+                            ctx.beginPath();
+                            ctx.moveTo(ax, ay);
+                            ctx.lineTo(bx, by);
+                            ctx.stroke();
+                            // 全体の輪郭
+                            ctx.strokeStyle = 'rgba(50,25,12,0.6)';
+                            ctx.lineWidth = 1.5;
+                            ctx.beginPath();
+                            ctx.moveTo(ax, ay);
+                            ctx.lineTo(bx, by);
+                            ctx.lineTo(cx2, cy2 + depth);
+                            ctx.lineTo(ax, ay + depth);
+                            ctx.closePath();
+                            ctx.stroke();
+                        } else if (seg.type === 'mud') { // 泥たまり
+                            const cx = dx + seg.width / 2;
+                            // 縁の濡れた土
+                            ctx.fillStyle = '#5a3a1a';
+                            ctx.beginPath();
+                            ctx.ellipse(cx, dy + 6, seg.width / 2, 10, 0, 0, Math.PI * 2);
+                            ctx.fill();
+                            // 泥本体
+                            ctx.fillStyle = '#3b2310';
+                            ctx.beginPath();
+                            ctx.ellipse(cx, dy + 5, seg.width / 2 - 4, 7, 0, 0, Math.PI * 2);
+                            ctx.fill();
+                            // 反射ハイライト
+                            ctx.fillStyle = 'rgba(140,110,70,0.5)';
+                            ctx.beginPath();
+                            ctx.ellipse(cx - seg.width / 6, dy + 3, seg.width / 6, 2, 0, 0, Math.PI * 2);
+                            ctx.fill();
+                        } else if (seg.type === 'hurdle') { // ハードル
+                            const hx = dx + seg.width / 2;
+                            const padW = 22; // 地面ハザードパッドの半幅
+
+                            // 1. レーン上の地面に「ハザードパッド」を描き、どのレーンかを明示
+                            //    (黄黒の縞をパッド形状にクリップ)
+                            ctx.save();
+                            ctx.beginPath();
+                            ctx.ellipse(hx, dy + 3, padW, 8, 0, 0, Math.PI * 2);
+                            ctx.clip();
+                            for (let s = -padW; s < padW; s += 8) {
+                                const idx = Math.floor((s + padW) / 8);
+                                ctx.fillStyle = (idx % 2 === 0) ? '#f5c518' : '#1a1a1a';
+                                ctx.fillRect(hx + s, dy - 8, 8, 24);
+                            }
+                            ctx.restore();
+                            // パッドの縁取り(白)で背景から浮かせる
+                            ctx.strokeStyle = '#fff';
+                            ctx.lineWidth = 1.5;
+                            ctx.beginPath();
+                            ctx.ellipse(hx, dy + 3, padW, 8, 0, 0, Math.PI * 2);
+                            ctx.stroke();
+
+                            // 2. 接地影（濃いめ・レーン位置を強調）
+                            ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                            ctx.beginPath();
+                            ctx.ellipse(hx, dy + 6, 16, 4, 0, 0, Math.PI * 2);
+                            ctx.fill();
+
+                            // 3. 支柱（地面に刺さるよう少し下まで）
+                            ctx.fillStyle = '#6b7374';
+                            ctx.fillRect(hx - 13, dy - seg.height, 4, seg.height + 4);
+                            ctx.fillRect(hx + 9, dy - seg.height, 4, seg.height + 4);
+                            ctx.fillStyle = '#8b9596'; // 支柱ハイライト
+                            ctx.fillRect(hx - 13, dy - seg.height, 1, seg.height + 4);
+                            ctx.fillRect(hx + 9, dy - seg.height, 1, seg.height + 4);
+
+                            // 4. 紅白パネル（高コントラストで遠くからでも視認）
+                            const top = dy - seg.height;
+                            const panelW = 26, panelX = hx - 13;
+                            const barH = 8;
+                            for (let b = 0, by = top; by < top + seg.height; b++, by += barH) {
+                                ctx.fillStyle = (b % 2 === 0) ? '#e74c3c' : '#ffffff';
+                                ctx.fillRect(panelX, by, panelW, Math.min(barH, top + seg.height - by));
+                            }
+                            // パネル枠と上面ハイライト
+                            ctx.strokeStyle = '#1a1a1a';
+                            ctx.lineWidth = 1;
+                            ctx.strokeRect(panelX, top, panelW, seg.height);
+                            ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                            ctx.fillRect(panelX, top, panelW, 1);
+
+                            // 5. 上部の警告フラッグ（はためき・視線誘導）
+                            const wave = Math.sin(Date.now() / 160 + seg.x) * 2;
+                            ctx.fillStyle = '#f39c12';
+                            ctx.beginPath();
+                            ctx.moveTo(hx + 11, top - 12);
+                            ctx.lineTo(hx + 11, top - 2);
+                            ctx.lineTo(hx + 24 + wave, top - 7 + wave);
+                            ctx.closePath();
+                            ctx.fill();
+                            ctx.fillStyle = '#6b7374';
+                            ctx.fillRect(hx + 10, top - 13, 2, 13);
+                        }
+                    }
+
+                    // 5b. 茂み（装飾・非衝突）
+                    if (this.bushes) {
+                        for (const bush of this.bushes) {
+                            if (bush.lane !== lane) continue;
+                            const bxs = bush.x - cameraX;
+                            if (bxs < -30 || bxs > GAME_WIDTH + 30) continue;
+                            this.drawBush(bxs, this.groundY + laneY + 4);
+                        }
+                    }
+
+                    // 5c. 冷却装置（オーバーヒート防止アイテム・非衝突で取得）
+                    if (this.coolers) {
+                        for (const c of this.coolers) {
+                            if (c.lane !== lane || c.taken) continue;
+                            const cxs = c.x - cameraX;
+                            if (cxs < -30 || cxs > GAME_WIDTH + 30) continue;
+                            this.drawCooler(cxs, this.groundY + laneY);
+                        }
+                    }
+                }
+
+                // 周回ライン（スタート/フィニッシュ）を各周の境目に表示
+                if (this.lapLength) {
+                    for (let L = 1; L < this.laps; L++) {
+                        const lxs = L * this.lapLength - cameraX;
+                        if (lxs < -10 || lxs > GAME_WIDTH + 10) continue;
+                        const cell = 10;
+                        for (let row = 0; row * cell < GAME_HEIGHT - 250; row++) {
+                            ctx.fillStyle = (row % 2 === 0) ? '#fff' : '#1a1a1a';
+                            ctx.fillRect(lxs - cell, 250 + row * cell, cell, cell);
+                            ctx.fillStyle = (row % 2 === 0) ? '#1a1a1a' : '#fff';
+                            ctx.fillRect(lxs, 250 + row * cell, cell, cell);
+                        }
+                    }
+                }
+
+                // ゴール（チェッカー柄＋アーチ）
+                const goalDX = this.goalX - cameraX;
+                if (goalDX > -120 && goalDX < GAME_WIDTH + 60) {
+                    // 路面のチェッカー帯
+                    const cell = 12;
+                    for (let row = 0; row * cell < GAME_HEIGHT - 250; row++) {
+                        for (let col = 0; col < 3; col++) {
+                            ctx.fillStyle = ((row + col) % 2 === 0) ? '#fff' : '#1a1a1a';
+                            ctx.fillRect(goalDX + col * cell, 250 + row * cell, cell, cell);
+                        }
+                    }
+                    // ゴールアーチの支柱
+                    ctx.fillStyle = '#c0392b';
+                    ctx.fillRect(goalDX - 14, 150, 10, 110);
+                    ctx.fillRect(goalDX + 40, 150, 10, 110);
+                    // アーチ上部の看板
+                    ctx.fillStyle = '#e74c3c';
+                    ctx.fillRect(goalDX - 18, 132, 72, 22);
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 16px Impact';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('GOAL', goalDX + 18, 149);
+                    ctx.textAlign = 'left';
+                    // チェッカーフラッグ（はためき）
+                    const flagWave = Math.sin(Date.now() / 150) * 3;
+                    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
+                        ctx.fillStyle = ((r + c) % 2 === 0) ? '#fff' : '#000';
+                        ctx.fillRect(goalDX + 50 + c * 6, 120 + r * 6 + flagWave, 6, 6);
+                    }
+                }
+
+                // バイク描画（ゴール/チェッカーより前面に出して自機が隠れないようにする）
+                // 奥のレーン(0)→手前(3)の順に描いて重なりを正しく
+                const bikes = [];
+                if (typeof rivals !== 'undefined') for (const rv of rivals) bikes.push({ lane: rv.lane, obj: rv });
+                if (playerObj) bikes.push({ lane: Math.round(playerObj.currentLane), obj: playerObj });
+                for (const id in networkPlayers) bikes.push({ lane: Math.round(networkPlayers[id].currentLane), obj: networkPlayers[id] });
+                bikes.sort((a, b) => a.lane - b.lane);
+                for (const bk of bikes) bk.obj.draw();
+
+                // 手前の柵と草
+                this.drawForegroundFence();
+            }
+
+            // 茂み（低木）の装飾
+            drawBush(cx, baseY) {
+                // 接地影
+                ctx.fillStyle = 'rgba(0,0,0,0.18)';
+                ctx.beginPath();
+                ctx.ellipse(cx, baseY + 2, 16, 4, 0, 0, Math.PI * 2);
+                ctx.fill();
+                // 葉の塊（濃淡2色の円を重ねる）
+                const blobs = [
+                    [-9, -2, 8], [9, -2, 8], [0, -7, 10], [-4, 0, 7], [5, 0, 7]
+                ];
+                ctx.fillStyle = '#2e7d32';
+                for (const [ox, oy, r] of blobs) {
+                    ctx.beginPath(); ctx.arc(cx + ox, baseY + oy, r, 0, Math.PI * 2); ctx.fill();
+                }
+                // ハイライト
+                ctx.fillStyle = '#4caf50';
+                for (const [ox, oy, r] of blobs) {
+                    ctx.beginPath(); ctx.arc(cx + ox - 1, baseY + oy - 2, r * 0.55, 0, Math.PI * 2); ctx.fill();
+                }
+                // 細かい葉のドット
+                ctx.fillStyle = '#1b5e20';
+                for (let i = 0; i < 5; i++) {
+                    ctx.fillRect(cx - 8 + i * 4, baseY - 6 + (i % 2) * 4, 2, 2);
+                }
+            }
+
+            // 冷却装置アイテム（オーバーヒート防止）
+            drawCooler(cx, baseY) {
+                const bob = Math.sin(Date.now() / 200 + cx) * 2; // ふわふわ浮遊
+                const topY = baseY - 18 + bob;
+                // 接地影
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                ctx.beginPath();
+                ctx.ellipse(cx, baseY + 4, 11, 4, 0, 0, Math.PI * 2);
+                ctx.fill();
+                // 光輪（目立たせる）
+                ctx.fillStyle = 'rgba(120,220,255,0.25)';
+                ctx.beginPath();
+                ctx.arc(cx, topY + 6, 15, 0, Math.PI * 2);
+                ctx.fill();
+                // 本体（水色のボックス）
+                ctx.fillStyle = '#3fc7e8';
+                this.roundRect(cx - 9, topY, 18, 16, 3); ctx.fill();
+                ctx.fillStyle = '#9fe8f7'; // 上面ハイライト
+                this.roundRect(cx - 9, topY, 18, 5, 3); ctx.fill();
+                ctx.strokeStyle = '#1b6f86';
+                ctx.lineWidth = 1.5;
+                this.roundRect(cx - 9, topY, 18, 16, 3); ctx.stroke();
+                // 雪の結晶マーク（冷却の象徴）
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.5;
+                const sx = cx, sy = topY + 8, r = 5;
+                ctx.beginPath();
+                for (let a = 0; a < Math.PI * 2; a += Math.PI / 3) {
+                    ctx.moveTo(sx, sy);
+                    ctx.lineTo(sx + Math.cos(a) * r, sy + Math.sin(a) * r);
+                }
+                ctx.stroke();
+            }
+
+            drawForegroundFence() {
+                // コース手前端（最前レーンの先）の俵柵。HUDのすぐ上に並ぶ
+                this.drawHayRow(GAME_HEIGHT - 74, 1.5);
+            }
+
+            drawBackground() {
+                ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+                // --- スタンド（観客席）— このスタジアム視点では最奥の背景 ---
+                this.drawGrandstand();
+
+                // --- テントの帯 ---
+                this.drawTent();
+
+                // --- 芝生エリア (Y: 110 ~ 250) — NES風のベタ塗り緑 ---
+                ctx.fillStyle = '#5cb83c';
+                ctx.fillRect(0, 110, GAME_WIDTH, 140);
+                // ごく控えめな芝目（横方向のうっすらした帯）
+                ctx.fillStyle = '#54ac36';
+                for (let y = 124; y < 248; y += 22) {
+                    for (let x = -(cameraX * 0.5) % 56; x < GAME_WIDTH + 56; x += 56) {
+                        ctx.fillRect(x, y, 26, 4);
+                    }
+                }
+                // 芝生と土の境目：俵（干し草ロール）の柵
+                this.drawHayRow(238, 1.0);
+            }
+
+            // 干し草の俵が横一列に並ぶ柵（柵・コース縁の共通描画）
+            drawHayRow(topY, parallax) {
+                const bw = 26;            // 俵1個の幅
+                const bh = 16;            // 俵の高さ
+                const off = (cameraX * parallax) % bw;
+                for (let x = -off - bw; x < GAME_WIDTH + bw; x += bw) {
+                    // 本体（角丸の俵）
+                    ctx.fillStyle = '#d8a838';
+                    this.roundRect(x + 1, topY, bw - 2, bh, 5);
+                    ctx.fill();
+                    // 上面ハイライト
+                    ctx.fillStyle = '#ecc25a';
+                    this.roundRect(x + 1, topY, bw - 2, 5, 4);
+                    ctx.fill();
+                    // 藁の巻き帯（縦のライン）と端の影
+                    ctx.fillStyle = '#a87820';
+                    ctx.fillRect(x + bw / 2 - 1, topY + 2, 2, bh - 4);
+                    ctx.fillRect(x, topY + 3, 2, bh - 6);
+                    // 下端の影
+                    ctx.fillStyle = 'rgba(120,80,20,0.5)';
+                    ctx.fillRect(x + 2, topY + bh - 3, bw - 4, 3);
+                }
+            }
+
+            roundRect(x, y, w, h, r) {
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.arcTo(x + w, y, x + w, y + h, r);
+                ctx.arcTo(x + w, y + h, x, y + h, r);
+                ctx.arcTo(x, y + h, x, y, r);
+                ctx.arcTo(x, y, x + w, y, r);
+                ctx.closePath();
+            }
+
+            drawGrandstand() {
+                // 観客席 (Y: 0 ~ 50) — 実機エキサイトバイク風のダイヤ柄
+                ctx.fillStyle = '#f8f8f8';
+                ctx.fillRect(0, 0, GAME_WIDTH, 50);
+
+                // ダイヤ（菱形）格子。NES風の高彩度パレットで市松配置
+                const dCols = ['#e8902c', '#f8f8f8', '#74b0e8', '#6cc040']; // 橙/白/水色/緑
+                const dw = 24, dh = 17; // ダイヤ1個の幅/高さ
+                const off = (cameraX * 0.1) % (dw * 2);
+                for (let row = -1; row * dh < 56; row++) {
+                    const cy = row * dh;
+                    const stagger = (row % 2) * dw; // 段ごとに半個ずらす
+                    for (let col = -2; col * (dw * 2) < GAME_WIDTH + dw * 2; col++) {
+                        const cx = col * dw * 2 + stagger - off;
+                        ctx.fillStyle = dCols[((row % 2) * 2 + (col % 2 + 2) % 2) % dCols.length];
+                        ctx.beginPath();
+                        ctx.moveTo(cx, cy);
+                        ctx.lineTo(cx + dw / 2, cy + dh / 2);
+                        ctx.lineTo(cx, cy + dh);
+                        ctx.lineTo(cx - dw / 2, cy + dh / 2);
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+                }
+
+                // 観客席下端の白いギザギザ縁 (Y: 50 ~ 62)
+                ctx.fillStyle = '#f8f8f8';
+                ctx.fillRect(0, 48, GAME_WIDTH, 4);
+                ctx.beginPath();
+                const zz = 18;
+                for (let x = -(cameraX * 0.15) % zz; x < GAME_WIDTH + zz; x += zz) {
+                    ctx.moveTo(x, 52);
+                    ctx.lineTo(x + zz / 2, 64);
+                    ctx.lineTo(x + zz, 52);
+                }
+                ctx.fill();
+            }
+
+            drawTent() {
+                // 青い空の帯 (Y: 62 ~ 110) — BESTタイム表示の背景
+                ctx.fillStyle = '#3ca0e8';
+                ctx.fillRect(0, 62, GAME_WIDTH, 48);
+            }
+        }
+
+        const player = new Player();
+        const networkPlayers = {}; // id -> Player
+        const track = new Track();
+
+        // --- ライバル3体（色・レーン・速度違い） ---
+        const rivals = [
+            new Rival({ frame: '#3498db', frameShade: '#1f6391', suit: '#ecf0f1', suitShade: '#aeb6bf', helmet: '#ffffff', lane: 0, baseSpeed: 9.3, startX: 220 }),
+            new Rival({ frame: '#9b59b6', frameShade: '#633974', suit: '#bb8fce', suitShade: '#7d3c98', helmet: '#e056fd', lane: 2, baseSpeed: 9.7, startX: 170 }),
+            new Rival({ frame: '#16a085', frameShade: '#0b5345', suit: '#7dcea0', suitShade: '#1e8449', helmet: '#abebc6', lane: 3, baseSpeed: 8.9, startX: 270 }),
+        ];
+
+        if (isController) { window.update = ()=>{}; window.draw = ()=>{}; window.gameLoop = ()=>{}; } // Controller doesn't run game loop
+        // --- メインループ ---
+        function update(timestamp) {
+            if (gameState === STATE_COUNTDOWN) {
+                // カウントダウン中はバイクを動かさない。3秒後にGO!
+                if (timestamp - countdownStart >= 3000) {
+                    gameState = STATE_PLAYING;
+                    startTime = timestamp;
+                }
+                updateParticles();
+                keysJustPressed.ArrowUp = false; keysJustPressed.ArrowDown = false;
+                return;
+            }
+            if (gameState === STATE_PLAYING) {
+                elapsedTime = timestamp - startTime;
+                updateTimeDisplay(elapsedTime);
+
+                if (player.x >= track.goalX) { // ゴール判定
+                    gameState = STATE_GAMEOVER;
+                    gameFinished();
+                    return;
+                }
+            }
+            if (gameState === STATE_PLAYING || gameState === STATE_CRASHED) {
+                player.update();
+                for (const id in networkPlayers) networkPlayers[id].update();
+                for (const rv of rivals) rv.update();
+            }
+            updateParticles();
+            keysJustPressed.ArrowUp = false; keysJustPressed.ArrowDown = false;
+        }
+
+        function draw() {
+            track.draw(player);
+            // パーティクル（地形・バイクの上に重ねる）
+            drawParticles();
+
+            // スタートのカウントダウン・シグナル（3→2→1→GO!）
+            const ct = performance.now() - countdownStart;
+            if (gameState === STATE_COUNTDOWN || (gameState === STATE_PLAYING && ct < 3850)) {
+                drawStartSignal(ct);
+            }
+
+            // ラップ＆順位表示（青い帯の中）
+            if (gameState === STATE_PLAYING || gameState === STATE_CRASHED) {
+                const lap = Math.min(track.laps, Math.floor(player.x / track.lapLength) + 1);
+                let ahead = 0; for (const rv of rivals) if (rv.x > player.x) ahead++;
+                const rank = ahead + 1;
+                const ord = ['', '1ST', '2ND', '3RD', '4TH'][rank] || (rank + 'TH');
+                ctx.font = 'bold 20px "Courier New", monospace';
+                ctx.fillStyle = '#fff';
+                ctx.textAlign = 'left';
+                ctx.fillText('LAP ' + lap + '/' + track.laps, 18, 102);
+                ctx.textAlign = 'right';
+                ctx.fillStyle = (rank === 1) ? '#f1c40f' : '#fff';
+                ctx.fillText(ord, GAME_WIDTH - 18, 102);
+                ctx.textAlign = 'left';
+            }
+
+            // 高速時のスピードライン演出
+            if (gameState === STATE_PLAYING && player.speed > 11) {
+                const intensity = Math.min(1, (player.speed - 11) / 5);
+                ctx.strokeStyle = `rgba(255,255,255,${0.12 + intensity * 0.18})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                for (let i = 0; i < 7; i++) {
+                    const ly = 270 + (Math.sin(Date.now() / 50 + i * 2) * 0.5 + 0.5) * 180;
+                    const lx = (Date.now() / 2 + i * 160) % (GAME_WIDTH + 120) - 60;
+                    ctx.moveTo(lx, ly);
+                    ctx.lineTo(lx - 40 - intensity * 30, ly);
+                }
+                ctx.stroke();
+            }
+
+            if (gameState === STATE_CRASHED) {
+                // 画面を軽くフラッシュ
+                ctx.fillStyle = 'rgba(255,80,40,0.08)';
+                ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+                ctx.font = 'bold 52px Impact'; ctx.textAlign = 'center';
+                if (Math.floor(Date.now() / 200) % 2 === 0) {
+                    ctx.fillStyle = '#000';
+                    ctx.fillText('CRASH!', GAME_WIDTH / 2 + 3, GAME_HEIGHT / 2 + 3);
+                    ctx.fillStyle = '#f1c40f';
+                    ctx.fillText('CRASH!', GAME_WIDTH / 2, GAME_HEIGHT / 2);
+                }
+                ctx.textAlign = 'left';
+            }
+        }
+
+        // スタート用の信号灯＋数字（3→2→1→GO!）
+        function drawStartSignal(t) {
+            const cx = GAME_WIDTH / 2, topY = 150;
+            const go = t >= 3000;
+            const sec = Math.floor(t / 1000);          // 0,1,2
+            const lampsOn = go ? 3 : (3 - sec);        // 点灯ランプ数 3→2→1
+            const lampR = 13, gap = 42;
+
+            ctx.save();
+            // パネル背景
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 3;
+            const pw = gap * 3 + 24, ph = lampR * 2 + 22;
+            ctx.fillRect(cx - pw / 2, topY - lampR - 11, pw, ph);
+            ctx.strokeRect(cx - pw / 2, topY - lampR - 11, pw, ph);
+
+            // 信号ランプ
+            for (let i = 0; i < 3; i++) {
+                const lx = cx + (i - 1) * gap;
+                const lit = go ? true : (i < lampsOn);
+                if (lit) {
+                    const glow = ctx.createRadialGradient(lx, topY, 2, lx, topY, lampR + 6);
+                    glow.addColorStop(0, go ? 'rgba(80,255,140,0.9)' : 'rgba(255,90,60,0.9)');
+                    glow.addColorStop(1, 'rgba(0,0,0,0)');
+                    ctx.fillStyle = glow;
+                    ctx.beginPath(); ctx.arc(lx, topY, lampR + 6, 0, Math.PI * 2); ctx.fill();
+                }
+                ctx.fillStyle = lit ? (go ? '#2ecc71' : '#e74c3c') : '#401414';
+                ctx.beginPath(); ctx.arc(lx, topY, lampR, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.arc(lx, topY, lampR, 0, Math.PI * 2); ctx.stroke();
+                if (lit) { // ハイライト
+                    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                    ctx.beginPath(); ctx.arc(lx - 4, topY - 4, 3, 0, Math.PI * 2); ctx.fill();
+                }
+            }
+
+            // 数字 / GO!
+            const label = go ? 'GO!' : String(3 - sec);
+            ctx.textAlign = 'center';
+            ctx.font = 'bold 60px Impact, sans-serif';
+            const ly = topY + lampR + 62;
+            ctx.fillStyle = '#000';
+            ctx.fillText(label, cx + 3, ly + 3);
+            ctx.fillStyle = go ? '#2ecc71' : '#f1c40f';
+            ctx.fillText(label, cx, ly);
+            ctx.textAlign = 'left';
+            ctx.restore();
+        }
+
+        function gameLoop(timestamp) {
+            update(timestamp);
+            draw();
+            // エンジン音（カウントダウンのアイドリング〜走行中の回転）
+            const engineOn = (gameState === STATE_PLAYING || gameState === STATE_CRASHED || gameState === STATE_COUNTDOWN);
+            sfx.updateEngine(player.speed, engineOn, keys.KeyZ && !player.overheated, player.overheated);
+            if (gameState !== STATE_GAMEOVER) animationId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- ゲーム進行管理 ---
+        function startGame() {
+            sfx.init(); sfx.resume(); // ユーザー操作のタイミングで音声を有効化
+            gameState = STATE_COUNTDOWN;
+            player.reset();
+            for (const id in networkPlayers) networkPlayers[id].reset();
+            track.generate();
+            rivals.forEach(r => r.reset());
+            cameraX = player.x - 150;
+            messageOverlay.classList.add('hidden');
+            topHud.classList.remove('hidden'); // プレイ中はBESTを表示
+            countdownStart = performance.now();
+            startTime = countdownStart + 3000; // 実計測はGO!から
+            updateTimeDisplay(0);
+            if (animationId) cancelAnimationFrame(animationId);
+            gameLoop(countdownStart);
+        }
+
+        function gameFinished() {
+            const finalTimeStr = formatTime(elapsedTime);
+            gameTitle.textContent = "FINISH!";
+            gameSubtitle.textContent = `TIME: ${finalTimeStr}`;
+            startBtn.textContent = "RETRY";
+            messageOverlay.classList.remove('hidden');
+            topHud.classList.add('hidden');
+            sfx.engineOff(); // ゴールでエンジン停止
+
+            // ベストタイム更新
+            const currentBest = parseTime(bestTime);
+            if (elapsedTime < currentBest) {
+                bestTime = finalTimeStr;
+                bestTimeDisplay.textContent = bestTime;
+                localStorage.setItem('exciteBikeBestTime', bestTime);
+                gameSubtitle.textContent += " (NEW BEST!)";
+            }
+        }
+
+        // 時間フォーマット (MM:SS:MS)
+        function formatTime(ms) {
+            const minutes = Math.floor(ms / 60000);
+            const seconds = Math.floor((ms % 60000) / 1000);
+            const centis = Math.floor((ms % 1000) / 10);
+            return `${pad(minutes)}:${pad(seconds)}:${pad(centis)}`;
+        }
+        function pad(n) { return n < 10 ? '0' + n : n; }
+        function parseTime(timeStr) {
+            const parts = timeStr.split(':').map(Number);
+            return parts[0] * 60000 + parts[1] * 1000 + parts[2] * 10;
+        }
+        function updateTimeDisplay(ms) { timeDisplay.textContent = formatTime(ms); }
+
+        // --- イベントリスナー ---
+        startBtn.addEventListener('click', startGame);
+
+        window.addEventListener('keydown', (e) => {
+            const code = e.code;
+            sfx.resume();
+            if (keys.hasOwnProperty(code)) {
+                if (!player.keys[code] && player.keysJustPressed.hasOwnProperty(code)) player.keysJustPressed[code] = true;
+                player.keys[code] = true;
+                if (!keys[code] && keysJustPressed.hasOwnProperty(code)) keysJustPressed[code] = true;
+                keys[code] = true; e.preventDefault();
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            if (keys.hasOwnProperty(e.code)) {
+                keys[e.code] = false;
+                player.keys[e.code] = false;
+            }
+        });
+
+        // モバイル操作
+        function bindTouch(id, code) {
+            const btn = document.getElementById(id);
+            btn.addEventListener('touchstart', (e) => { e.preventDefault(); keys[code] = true; if (keysJustPressed.hasOwnProperty(code)) keysJustPressed[code] = true; });
+            btn.addEventListener('touchend', (e) => { e.preventDefault(); keys[code] = false; });
+            btn.addEventListener('touchcancel', (e) => { e.preventDefault(); keys[code] = false; });
+        }
+        bindTouch('btn-accel', 'KeyX'); bindTouch('btn-turbo', 'KeyZ');
+        bindTouch('btn-up', 'ArrowUp'); bindTouch('btn-down', 'ArrowDown');
+        bindTouch('btn-left', 'ArrowLeft'); bindTouch('btn-right', 'ArrowRight');
+
+        // --- スマホ参加用QRコードの生成 ---
+        (function setupJoinQR() {
+            const qrImg = document.getElementById('qr-img');
+            const qrUrl = document.getElementById('qr-url');
+            const qrBox = document.getElementById('qr-box');
+            if (!qrImg) return;
+            const url = location.href.split('?')[0] + '?role=controller';
+            qrUrl.textContent = url;
+            // localhostだと別端末から繋がらないため注意書きを出す
+            const qrNote = document.getElementById('qr-note');
+            if (qrNote && /^(localhost|127\.0\.0\.1)/.test(location.hostname)) {
+                qrNote.textContent = '※同じWi-Fi上でPCのIPアドレスで公開してください';
+            }
+            // QR画像（外部生成API）。読み込めない場合はURLテキストで代替
+            const api = 'https://api.qrserver.com/v1/create-qr-code/?size=160x160&margin=4&data=' + encodeURIComponent(url);
+            qrImg.onerror = () => { qrImg.style.display = 'none'; };
+            qrImg.src = api;
+        })();
+
+        // 初期描画
+        if (!isController) {
+            track.generate();
+            track.draw(player);
+        }
+    </script>
+</body>
+
+</html>

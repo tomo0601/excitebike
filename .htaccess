@@ -1,0 +1,37 @@
+# ===== EXCITE BIKE FC / XSERVER(Apache) 用設定 =====
+
+# 既定ドキュメント
+DirectoryIndex index.html
+
+# 文字コード
+AddDefaultCharset UTF-8
+
+# ---- HTTPSへ常時リダイレクト（XSERVERの無料SSLを有効化しておくこと）----
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} off
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+</IfModule>
+
+# ---- gzip圧縮 ----
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css text/javascript application/javascript image/svg+xml application/json
+</IfModule>
+
+# ---- キャッシュ制御 ----
+<IfModule mod_headers.c>
+  # HTMLは常に最新を取得（更新が即反映されるように）
+  <FilesMatch "\.html$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+  # 画像・音声などの静的アセットは長期キャッシュ
+  <FilesMatch "\.(?i:png|jpg|jpeg|gif|svg|webp|ico|mp3|ogg|wav|woff2?)$">
+    Header set Cache-Control "public, max-age=2592000"
+  </FilesMatch>
+</IfModule>
+
+# ---- MIMEタイプ（保険）----
+<IfModule mod_mime.c>
+  AddType image/svg+xml .svg
+  AddType audio/mpeg .mp3
+</IfModule>

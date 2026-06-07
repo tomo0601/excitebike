@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Claude_Preview__preview_start",
+      "Bash(grep -n \"const player = new Player\\\\|const track = new Track\\\\|function startGame\\\\|function update\\(timestamp\\)\\\\|function draw\\(\\)\\\\|track.generate\\(\\);\\\\s*$\\\\|this.drawForegroundFence\\(\\)\\\\|player.update\\(\\);\" index.html)"
+    ]
+  }
+}
