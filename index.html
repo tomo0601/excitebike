@@ -1486,6 +1486,115 @@
                 this.segments.push({ x: this.goalX, width: 800, y1: G, y2: G, type: 'goal', height: 0, lane: 0 });
             }
 
+            drawClient(playersData) {
+                // 背景・空
+                ctx.fillStyle = '#64b0ff';
+                ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+                // スタンド（観客席）
+                this.drawGrandstand();
+                // テントの帯
+                this.drawTent();
+
+                // 芝生エリア
+                ctx.fillStyle = '#5cb83c';
+                ctx.fillRect(0, 110, GAME_WIDTH, 140);
+                ctx.fillStyle = '#54ac36';
+                for (let y = 124; y < 248; y += 22) {
+                    for (let x = -(cameraX * 0.5) % 56; x < GAME_WIDTH + 56; x += 56) {
+                        ctx.fillRect(x, y, 28, 4);
+                    }
+                }
+
+                // フェンス
+                this.drawBackFence();
+
+                // 地面（ダート）
+                ctx.fillStyle = '#c78b40';
+                ctx.fillRect(0, 250, GAME_WIDTH, 230);
+                
+                // コース境界フェンス
+                for (let i = 0; i < GAME_WIDTH; i += 40) {
+                    const fx = i - (cameraX % 40);
+                    ctx.fillStyle = '#fff';
+                    ctx.fillRect(fx, 250, 4, -20);
+                    ctx.fillStyle = '#e74c3c';
+                    ctx.fillRect(fx, 240, 40, 6);
+                }
+
+                // コース上のダート模様
+                this.drawDirtPattern();
+
+                // 障害物
+                for (const obs of this.obstacles) {
+                    const sx = obs.x - cameraX;
+                    if (sx + obs.width < 0 || sx > GAME_WIDTH) continue;
+                    
+                    if (obs.type === 'dirt') {
+                        ctx.fillStyle = '#a66b2a';
+                        this.roundRect(sx, 480 - obs.height, obs.width, obs.height, 5);
+                        ctx.fill();
+                        ctx.fillStyle = '#8a551c';
+                        for(let i=0; i<3; i++) {
+                            ctx.fillRect(sx + 10 + i*20, 480 - obs.height + 10, 8, 4);
+                        }
+                    } else if (obs.type === 'jump') {
+                        ctx.fillStyle = '#e67e22';
+                        ctx.beginPath();
+                        ctx.moveTo(sx, 480);
+                        ctx.lineTo(sx + obs.width, 480 - obs.height);
+                        ctx.lineTo(sx + obs.width, 480);
+                        ctx.fill();
+                        ctx.strokeStyle = '#d35400';
+                        ctx.lineWidth = 4;
+                        ctx.beginPath();
+                        ctx.moveTo(sx, 480);
+                        ctx.lineTo(sx + obs.width, 480 - obs.height);
+                        ctx.stroke();
+                        // 矢印ペイント
+                        ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                        ctx.beginPath();
+                        ctx.moveTo(sx + obs.width/2 - 10, 480 - obs.height/2);
+                        ctx.lineTo(sx + obs.width/2 + 10, 480 - obs.height/2);
+                        ctx.lineTo(sx + obs.width/2, 480 - obs.height/2 - 10);
+                        ctx.fill();
+                    } else if (obs.type === 'water') {
+                        ctx.fillStyle = '#3498db';
+                        ctx.beginPath();
+                        ctx.ellipse(sx + obs.width/2, 480 - obs.height/2, obs.width/2, obs.height/2, 0, 0, Math.PI*2);
+                        ctx.fill();
+                        ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                        ctx.fillRect(sx + obs.width/2 - 10, 480 - obs.height/2 - 5, 20, 4);
+                    }
+                }
+
+                // ゴールライン
+                const gx = this.length - cameraX;
+                if (gx > -100 && gx < GAME_WIDTH) {
+                    ctx.fillStyle = '#fff'; ctx.fillRect(gx, 250, 20, 230);
+                    ctx.fillStyle = '#e74c3c';
+                    for (let y = 250; y < 480; y += 40) {
+                        ctx.fillRect(gx, y, 10, 20); ctx.fillRect(gx + 10, y + 20, 10, 20);
+                    }
+                }
+
+                // プレイヤー達の描画
+                const bikes = [];
+                for (const id in playersData) {
+                    bikes.push({ lane: Math.round(playersData[id].currentLane), obj: playersData[id] });
+                }
+                bikes.sort((a, b) => a.lane - b.lane);
+                for (const b of bikes) {
+                    const pd = b.obj;
+                    const dummyPlayer = new Player(pd.colorConfig);
+                    Object.assign(dummyPlayer, pd);
+                    dummyPlayer.draw();
+                }
+
+                // 手前の柵
+                this.drawForegroundFence();
+            }
+
             draw(playerObj) {
                 this.drawBackground(); // 背景描画
 
